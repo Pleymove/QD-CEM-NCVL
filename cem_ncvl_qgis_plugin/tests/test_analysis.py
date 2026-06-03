@@ -92,6 +92,15 @@ def test_rows_carry_fid_and_xy_for_zoom_and_export():
     assert rows[0]["_xy"] == (1.0, 2.0)
 
 
+def test_rows_carry_travaux_attribute():
+    poles = [Pole(id="A", state="plante", xy=(0.0, 0.0),
+                  attrs={"travaux": "A poser no cdc"})]
+    rows, _, _ = analyze(
+        poles, [], DEFAULT_PULLED_STATUSES, buffer_m=5.0,
+        selected_pole_states=["plante"])
+    assert rows[0]["travaux"] == "A poser no cdc"
+
+
 def test_no_pole_state_filter_keeps_all_poles():
     poles, cables = _scenario()
     rows, counters, _ = analyze(

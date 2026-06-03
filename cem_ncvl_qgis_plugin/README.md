@@ -69,6 +69,7 @@ que les couches du projet courant (pas de fichiers externes).
 | Couche câbles        | —       | Oui         | `0_cable_suivi.geom`         |
 | ID poteau            | Poteaux | Oui         | `num_appui` / `id`           |
 | État poteau          | Poteaux | Oui         | `statut`                     |
+| Travaux              | Poteaux | Non         | `travaux`                    |
 | Statut câble         | Câbles  | Oui         | `statut`                     |
 | Référence câble      | Câbles  | Non         | `ref_cable`                  |
 | Commune              | Poteaux | Non         | `commune`                    |

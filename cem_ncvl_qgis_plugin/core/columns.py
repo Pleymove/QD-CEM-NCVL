@@ -7,6 +7,7 @@ POLE_COLUMNS = [
     ("departement", "Département"),
     ("territoire", "Territoire / plaque"),
     ("etat_poteau", "État poteau"),
+    ("travaux", "Travaux"),
     ("nb_cables", "Nombre câbles associés"),
     ("etats_cables", "États câbles trouvés"),
     ("cables_associes", "Câbles associés"),

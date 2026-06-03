@@ -1,8 +1,8 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <plugins>
-  <pyqgis_plugin name="CEM NCVL - Poteaux sans cable tire" version="1.0.3">
-    <description>Identifie les poteaux remplaces / implantes (statut 'plante') sans cable rattache au statut tire, par analyse spatiale (buffer EPSG:2154), et exporte un XLSX detail + syntheses. Zoom carte, export shapefile et filtre territoire.</description>
-    <version>1.0.3</version>
+  <pyqgis_plugin name="CEM NCVL - Poteaux sans cable tire" version="1.0.4">
+    <description>Identifie les poteaux remplaces / implantes (statut 'plante') sans cable rattache au statut tire, par analyse spatiale (buffer EPSG:2154), et exporte un XLSX detail + syntheses. Zoom carte, export shapefile, filtre territoire et champ travaux.</description>
+    <version>1.0.4</version>
     <qgis_minimum_version>3.16</qgis_minimum_version>
     <qgis_maximum_version>4.99</qgis_maximum_version>
     <homepage>https://github.com/Pleymove/QD-CEM-NCVL</homepage>

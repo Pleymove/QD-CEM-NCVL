@@ -21,7 +21,8 @@ LAYER_HINTS = {
 
 FIELD_HINTS = {
     "id_poteau": ["num_appui", "id__pa", "num_appui_orange", "id"],
-    "etat_poteau": ["statut", "travaux", "etat"],
+    "etat_poteau": ["statut", "etat"],
+    "travaux": ["travaux", "trvx", "type_travaux"],
     "ref_cable": ["ref_cable", "ref", "reference"],
     "statut_cable": ["statut", "etat", "status"],
     "commune": ["commune", "ville"],

@@ -99,10 +99,13 @@ def _lines_xy(geom, transform):
 
 
 def _attrs(feature, mapping):
-    """Construit le dict d'attributs optionnels (commune/dept/territoire)."""
+    """Construit le dict d'attributs optionnels à partir du mapping fourni.
+
+    ``mapping`` est un dict ``rôle -> nom de champ`` (ex. commune, departement,
+    territoire, travaux). Un champ vide donne une valeur vide.
+    """
     attrs = {}
-    for key in ("commune", "departement", "territoire"):
-        field = mapping.get(key)
+    for key, field in mapping.items():
         if field:
             value = feature[field]
             attrs[key] = "" if value is None else str(value)
@@ -169,6 +172,7 @@ SHP_FIELDS = [
     ("departement", "dept", "string"),
     ("territoire", "territoire", "string"),
     ("etat_poteau", "etat_pot", "string"),
+    ("travaux", "travaux", "string"),
     ("nb_cables", "nb_cables", "integer"),
     ("etats_cables", "etats_cab", "string"),
     ("cables_associes", "cables", "string"),
