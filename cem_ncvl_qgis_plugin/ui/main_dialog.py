@@ -126,14 +126,15 @@ class CemNcvlDialog(QDialog):
                                   "(cas client : famille « plante »)"))
         self.list_pole_states = QListWidget()
         self.list_pole_states.setSelectionMode(
-            QAbstractItemView.NoSelection)
+            QAbstractItemView.SelectionMode.NoSelection)
         col_pole.addWidget(self.list_pole_states)
         h.addLayout(col_pole)
 
         col_cable = QVBoxLayout()
         col_cable.addWidget(QLabel("Statuts câble considérés comme « tirés »"))
         self.list_pulled = QListWidget()
-        self.list_pulled.setSelectionMode(QAbstractItemView.NoSelection)
+        self.list_pulled.setSelectionMode(
+            QAbstractItemView.SelectionMode.NoSelection)
         col_cable.addWidget(self.list_pulled)
         h.addLayout(col_cable)
 
@@ -150,7 +151,8 @@ class CemNcvlDialog(QDialog):
 
         # --- Tableau résultat ---
         self.table = QTableWidget()
-        self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self.table.setEditTriggers(
+            QAbstractItemView.EditTrigger.NoEditTriggers)
         self.table.setColumnCount(len(POLE_COLUMNS))
         self.table.setHorizontalHeaderLabels(
             [label for _, label in POLE_COLUMNS])
@@ -166,7 +168,8 @@ class CemNcvlDialog(QDialog):
             "Synthèses calculées sur les poteaux sortis par l'analyse."))
 
         self.table_recap = QTableWidget()
-        self.table_recap.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self.table_recap.setEditTriggers(
+            QAbstractItemView.EditTrigger.NoEditTriggers)
         self.table_recap.setColumnCount(3)
         self.table_recap.setHorizontalHeaderLabels(
             ["Synthèse", "Valeur", "Nombre"])
@@ -243,16 +246,18 @@ class CemNcvlDialog(QDialog):
         widget.clear()
         for value in values:
             item = QListWidgetItem(value)
-            item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
+            item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
             checked = normalize_status(value) in default_norm
-            item.setCheckState(Qt.Checked if checked else Qt.Unchecked)
+            item.setCheckState(
+                Qt.CheckState.Checked if checked
+                else Qt.CheckState.Unchecked)
             widget.addItem(item)
 
     def _checked_values(self, widget):
         values = []
         for i in range(widget.count()):
             item = widget.item(i)
-            if item.checkState() == Qt.Checked:
+            if item.checkState() == Qt.CheckState.Checked:
                 values.append(item.text())
         return values
 

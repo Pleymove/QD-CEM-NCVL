@@ -15,22 +15,33 @@ from qgis.core import (
     QgsCoordinateReferenceSystem,
     QgsCoordinateTransform,
     QgsProject,
-    QgsWkbTypes,
+    QgsVectorLayer,
 )
 
 from .core.models import Pole, Cable
 
 TARGET_CRS_AUTHID = "EPSG:2154"
 
+# Constantes de type de géométrie compatibles QGIS 3 et QGIS 4 (Qt6).
+# QGIS 4 expose l'énumération via ``Qgis.GeometryType`` ; QGIS 3 via
+# ``QgsWkbTypes`` (formes courtes supprimées sous PyQt6).
+try:  # QGIS >= 3.30 / QGIS 4
+    from qgis.core import Qgis
+    _POINT_GEOM = Qgis.GeometryType.Point
+    _LINE_GEOM = Qgis.GeometryType.Line
+except (ImportError, AttributeError):  # repli QGIS 3 ancien
+    from qgis.core import QgsWkbTypes
+    _POINT_GEOM = QgsWkbTypes.PointGeometry
+    _LINE_GEOM = QgsWkbTypes.LineGeometry
+
 
 def list_vector_layers():
     """Renvoie les couches vecteur du projet courant (objets QgsVectorLayer)."""
     layers = []
     for layer in QgsProject.instance().mapLayers().values():
-        # Test de canard : on garde ce qui ressemble à une couche vecteur.
-        if hasattr(layer, "fields") and hasattr(layer, "getFeatures"):
-            if layer.type() == layer.VectorLayer:
-                layers.append(layer)
+        # isinstance est robuste quelle que soit la version QGIS / l'API enum.
+        if isinstance(layer, QgsVectorLayer) and layer.isValid():
+            layers.append(layer)
     return layers
 
 
@@ -142,10 +153,8 @@ def extract_cables(layer, status_field, ref_field=None, optional_fields=None,
 
 
 def is_point_layer(layer):
-    return layer is not None and QgsWkbTypes.geometryType(
-        layer.wkbType()) == QgsWkbTypes.PointGeometry
+    return layer is not None and layer.geometryType() == _POINT_GEOM
 
 
 def is_line_layer(layer):
-    return layer is not None and QgsWkbTypes.geometryType(
-        layer.wkbType()) == QgsWkbTypes.LineGeometry
+    return layer is not None and layer.geometryType() == _LINE_GEOM
