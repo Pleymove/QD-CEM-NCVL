@@ -1,0 +1,4 @@
+# Dépendances pour exécuter les tests de logique métier hors QGIS.
+# En production, QGIS fournit déjà PyQt et l'API qgis.core.
+openpyxl>=3.0
+pytest>=7.0
