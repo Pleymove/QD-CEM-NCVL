@@ -1,0 +1,16 @@
+[general]
+name=CEM NCVL - Poteaux sans cable tire
+qgisMinimumVersion=3.16
+description=Identifie les poteaux remplaces / implantes (statut 'plante') sans cable rattache au statut tire, par analyse spatiale, et exporte un XLSX detail + syntheses.
+about=Plugin QGIS pour le projet CEM NCVL. Filtre les poteaux de la couche supports (statut 'plante'), rattache spatialement les cables de la couche cable_suivi via un buffer parametrable (5 m par defaut, EPSG:2154), et liste les poteaux dont aucun cable rattache n'a un statut tire (par defaut : Tire, Tirage fini). Export Excel avec feuilles Parametres, Liste poteaux, Cables associes, Synthese et TCD.
+version=0.1.0
+author=Pleymove
+email=pierrebirau@gmail.com
+tracker=https://github.com/Pleymove/QD-CEM-NCVL/issues
+repository=https://github.com/Pleymove/QD-CEM-NCVL
+homepage=https://github.com/Pleymove/QD-CEM-NCVL
+category=Vector
+icon=resources/icon.svg
+experimental=True
+deprecated=False
+tags=cem,ncvl,poteaux,cables,fibre,analyse spatiale,buffer,xlsx
