@@ -68,6 +68,30 @@ def test_pulled_status_normalized_excludes_pole():
     assert counters["poles_without_pulled"] == 0
 
 
+def test_territoire_filter_restricts_scope():
+    poles = [
+        Pole(id="A", state="plante", xy=(0.0, 0.0),
+             attrs={"territoire": "Centre"}),
+        Pole(id="B", state="plante", xy=(50.0, 50.0),
+             attrs={"territoire": "Normandie"}),
+    ]
+    cables = []  # aucun câble => les deux poteaux sortiraient sans filtre
+    rows, counters, _ = analyze(
+        poles, cables, DEFAULT_PULLED_STATUSES, buffer_m=5.0,
+        selected_pole_states=["plante"], selected_territoires=["Centre"])
+    assert {r["id_poteau"] for r in rows} == {"A"}
+    assert counters["poles_selected"] == 1
+
+
+def test_rows_carry_fid_and_xy_for_zoom_and_export():
+    poles = [Pole(id="A", state="plante", xy=(1.0, 2.0), fid=42)]
+    rows, _, _ = analyze(
+        poles, [], DEFAULT_PULLED_STATUSES, buffer_m=5.0,
+        selected_pole_states=["plante"])
+    assert rows[0]["_fid"] == 42
+    assert rows[0]["_xy"] == (1.0, 2.0)
+
+
 def test_no_pole_state_filter_keeps_all_poles():
     poles, cables = _scenario()
     rows, counters, _ = analyze(

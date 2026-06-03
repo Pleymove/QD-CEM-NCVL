@@ -1,8 +1,8 @@
 """Fenêtre principale du plugin CEM NCVL — interface à onglets.
 
 Onglet 1 « Analyse poteaux » : sélection des couches, mapping des champs,
-test, multi-sélection des états (poteau / câble tiré), buffer, analyse et
-tableau résultat.
+test, filtres multi-sélection (état poteau / statut câble tiré / territoire),
+buffer, analyse, tableau résultat avec zoom carte et export shapefile.
 
 Onglet 2 « Récap TCD / export » : synthèses calculées et export XLSX.
 
@@ -14,10 +14,10 @@ import os
 
 from qgis.PyQt.QtCore import Qt, QSettings
 from qgis.PyQt.QtWidgets import (
-    QAbstractItemView, QCheckBox, QComboBox, QDialog, QDoubleSpinBox,
-    QFileDialog, QFormLayout, QGroupBox, QHBoxLayout, QLabel, QListWidget,
-    QListWidgetItem, QMessageBox, QPushButton, QTableWidget, QTableWidgetItem,
-    QTabWidget, QVBoxLayout, QWidget,
+    QAbstractItemView, QComboBox, QDialog, QDoubleSpinBox, QFileDialog,
+    QFormLayout, QGroupBox, QHBoxLayout, QLabel, QLineEdit, QListWidget,
+    QListWidgetItem, QMessageBox, QPushButton, QScrollArea, QSplitter,
+    QTableWidget, QTableWidgetItem, QTabWidget, QVBoxLayout, QWidget,
 )
 
 from .. import qgis_adapter as adapter
@@ -25,14 +25,11 @@ from ..core import layer_mapping
 from ..core.cable_filters import DEFAULT_PULLED_STATUSES
 from ..core.columns import POLE_COLUMNS
 from ..core.poteaux_analysis import analyze, DEFAULT_BUFFER_M, DEFAULT_POLE_STATES
-from ..core.synthese import build_syntheses, build_tcd_table
+from ..core.synthese import build_syntheses
 from ..core import export_xlsx
 from ..core.normalize import normalize_status
 
 SETTINGS_PREFIX = "cem_ncvl_plugin/"
-
-# Champs optionnels mappés côté poteaux.
-OPTIONAL_ROLES = ["commune", "departement", "territoire"]
 
 
 class CemNcvlDialog(QDialog):
@@ -48,9 +45,11 @@ class CemNcvlDialog(QDialog):
         self.rows = []
         self.counters = {}
         self.cable_detail = []
+        self._visible_rows = []          # lignes actuellement affichées (filtre)
+        self._analysis_pole_layer = None  # couche source pour le zoom carte
 
         self.setWindowTitle("CEM NCVL — Poteaux sans câble tiré")
-        self.resize(1000, 720)
+        self.resize(1040, 760)
 
         self.tabs = QTabWidget(self)
         self.tabs.addTab(self._build_tab_analyse(), "Analyse poteaux")
@@ -62,14 +61,80 @@ class CemNcvlDialog(QDialog):
         self._reload_layers()
         self._load_settings()
 
+    # ------------------------------------------------------------ UI helpers
+    def _build_checklist_column(self, title, tooltip=""):
+        """Construit une colonne « titre + boutons Tout/Rien + liste cochable »."""
+        col = QVBoxLayout()
+        label = QLabel(title)
+        if tooltip:
+            label.setToolTip(tooltip)
+        col.addWidget(label)
+
+        buttons = QHBoxLayout()
+        btn_all = QPushButton("Tout")
+        btn_none = QPushButton("Rien")
+        for btn in (btn_all, btn_none):
+            btn.setMaximumWidth(60)
+        buttons.addWidget(btn_all)
+        buttons.addWidget(btn_none)
+        buttons.addStretch()
+        col.addLayout(buttons)
+
+        widget = QListWidget()
+        widget.setSelectionMode(QAbstractItemView.SelectionMode.NoSelection)
+        col.addWidget(widget)
+
+        btn_all.clicked.connect(lambda: self._set_all_checks(widget, True))
+        btn_none.clicked.connect(lambda: self._set_all_checks(widget, False))
+        return col, widget
+
+    def _set_all_checks(self, widget, checked):
+        state = (Qt.CheckState.Checked if checked
+                 else Qt.CheckState.Unchecked)
+        for i in range(widget.count()):
+            widget.item(i).setCheckState(state)
+
     # ------------------------------------------------------------------ UI
     def _build_tab_analyse(self):
         tab = QWidget()
         outer = QVBoxLayout(tab)
 
-        # --- Couches & champs ---
-        box_layers = QGroupBox("Couches et champs")
-        form = QFormLayout(box_layers)
+        splitter = QSplitter(Qt.Orientation.Vertical)
+        outer.addWidget(splitter)
+
+        # ============ Zone configuration (défilable) ============
+        config = QWidget()
+        cfg = QVBoxLayout(config)
+
+        cfg.addWidget(self._build_box_layers())
+        cfg.addWidget(self._build_box_filters())
+
+        btn_analyse = QPushButton("Analyser")
+        btn_analyse.setMinimumHeight(34)
+        btn_analyse.setStyleSheet("font-weight: bold;")
+        btn_analyse.clicked.connect(self.on_analyse)
+        cfg.addWidget(btn_analyse)
+
+        self.lbl_counters = QLabel("Aucune analyse lancée.")
+        self.lbl_counters.setWordWrap(True)
+        self.lbl_counters.setStyleSheet("font-weight: bold; color: #1F4E78;")
+        cfg.addWidget(self.lbl_counters)
+
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setWidget(config)
+        splitter.addWidget(scroll)
+
+        # ============ Zone résultats ============
+        splitter.addWidget(self._build_results_widget())
+        splitter.setStretchFactor(0, 0)
+        splitter.setStretchFactor(1, 1)
+        splitter.setSizes([400, 360])
+        return tab
+
+    def _build_box_layers(self):
+        box = QGroupBox("1. Couches et champs")
+        form = QFormLayout(box)
 
         self.cmb_pole_layer = QComboBox()
         self.cmb_cable_layer = QComboBox()
@@ -95,6 +160,12 @@ class CemNcvlDialog(QDialog):
         self.cmb_departement = QComboBox()
         self.cmb_territoire = QComboBox()
 
+        self.cmb_id_poteau.setToolTip("Champ identifiant du poteau (ex. num_appui)")
+        self.cmb_etat_poteau.setToolTip("Champ d'état (ex. statut = 'plante')")
+        self.cmb_statut_cable.setToolTip("Champ de statut du câble")
+        self.cmb_territoire.setToolTip(
+            "Champ territoire / plaque (sert au filtre et aux synthèses)")
+
         form.addRow("ID poteau *", self.cmb_id_poteau)
         form.addRow("État poteau *", self.cmb_etat_poteau)
         form.addRow("Référence câble", self.cmb_ref_cable)
@@ -109,56 +180,78 @@ class CemNcvlDialog(QDialog):
         self.spin_buffer.setSingleStep(0.5)
         self.spin_buffer.setValue(DEFAULT_BUFFER_M)
         self.spin_buffer.setSuffix(" m")
+        self.spin_buffer.setToolTip(
+            "Rayon du buffer autour du poteau (analyse en EPSG:2154)")
         form.addRow("Rayon de recherche autour du poteau", self.spin_buffer)
 
         btn_test = QPushButton("Tester les couches / champs")
+        btn_test.setToolTip(
+            "Valide le mapping et charge les valeurs des filtres ci-dessous")
         btn_test.clicked.connect(self.on_test)
         form.addRow(btn_test)
+        return box
 
-        outer.addWidget(box_layers)
+    def _build_box_filters(self):
+        box = QGroupBox("2. Filtres métier (cliquer « Tester » pour les remplir)")
+        h = QHBoxLayout(box)
 
-        # --- Filtres états ---
-        box_filters = QGroupBox("Filtres métier")
-        h = QHBoxLayout(box_filters)
+        col_pole, self.list_pole_states = self._build_checklist_column(
+            "États poteau à analyser",
+            "Cas client : famille « plante » (planté / remplacé / recalé)")
+        col_pulled, self.list_pulled = self._build_checklist_column(
+            "Statuts câble « tirés »",
+            "Un poteau sort si aucun câble rattaché n'a un de ces statuts")
+        col_terr, self.list_territoires = self._build_checklist_column(
+            "Territoire / plaque",
+            "Laisser vide = analyser tous les territoires")
 
-        col_pole = QVBoxLayout()
-        col_pole.addWidget(QLabel("États poteau à analyser\n"
-                                  "(cas client : famille « plante »)"))
-        self.list_pole_states = QListWidget()
-        self.list_pole_states.setSelectionMode(
-            QAbstractItemView.SelectionMode.NoSelection)
-        col_pole.addWidget(self.list_pole_states)
         h.addLayout(col_pole)
+        h.addLayout(col_pulled)
+        h.addLayout(col_terr)
+        return box
 
-        col_cable = QVBoxLayout()
-        col_cable.addWidget(QLabel("Statuts câble considérés comme « tirés »"))
-        self.list_pulled = QListWidget()
-        self.list_pulled.setSelectionMode(
-            QAbstractItemView.SelectionMode.NoSelection)
-        col_cable.addWidget(self.list_pulled)
-        h.addLayout(col_cable)
+    def _build_results_widget(self):
+        widget = QWidget()
+        v = QVBoxLayout(widget)
 
-        outer.addWidget(box_filters)
+        bar = QHBoxLayout()
+        self.txt_filter = QLineEdit()
+        self.txt_filter.setPlaceholderText(
+            "Filtrer le tableau (ID, commune, motif…)")
+        self.txt_filter.textChanged.connect(self._apply_table_filter)
+        bar.addWidget(self.txt_filter, 1)
 
-        # --- Action analyse + compteurs ---
-        btn_analyse = QPushButton("Analyser")
-        btn_analyse.clicked.connect(self.on_analyse)
-        outer.addWidget(btn_analyse)
+        btn_zoom = QPushButton("Zoomer sur le poteau")
+        btn_zoom.setToolTip("Zoome sur le poteau sélectionné (ou double-clic)")
+        btn_zoom.clicked.connect(self.on_zoom)
+        bar.addWidget(btn_zoom)
 
-        self.lbl_counters = QLabel("Aucune analyse lancée.")
-        self.lbl_counters.setWordWrap(True)
-        outer.addWidget(self.lbl_counters)
+        btn_shp = QPushButton("Exporter poteaux (SHP)")
+        btn_shp.setToolTip("Exporte les poteaux sortis en shapefile")
+        btn_shp.clicked.connect(self.on_export_shapefile)
+        bar.addWidget(btn_shp)
 
-        # --- Tableau résultat ---
+        btn_xlsx = QPushButton("Exporter (XLSX)")
+        btn_xlsx.clicked.connect(self.on_export)
+        bar.addWidget(btn_xlsx)
+
+        v.addLayout(bar)
+
         self.table = QTableWidget()
         self.table.setEditTriggers(
             QAbstractItemView.EditTrigger.NoEditTriggers)
+        self.table.setSelectionBehavior(
+            QAbstractItemView.SelectionBehavior.SelectRows)
+        self.table.setSelectionMode(
+            QAbstractItemView.SelectionMode.SingleSelection)
         self.table.setColumnCount(len(POLE_COLUMNS))
         self.table.setHorizontalHeaderLabels(
             [label for _, label in POLE_COLUMNS])
-        outer.addWidget(self.table)
-
-        return tab
+        self.table.horizontalHeader().setStretchLastSection(True)
+        self.table.setSortingEnabled(True)
+        self.table.cellDoubleClicked.connect(lambda *_: self.on_zoom())
+        v.addWidget(self.table)
+        return widget
 
     def _build_tab_recap(self):
         tab = QWidget()
@@ -173,12 +266,18 @@ class CemNcvlDialog(QDialog):
         self.table_recap.setColumnCount(3)
         self.table_recap.setHorizontalHeaderLabels(
             ["Synthèse", "Valeur", "Nombre"])
+        self.table_recap.horizontalHeader().setStretchLastSection(True)
         outer.addWidget(self.table_recap)
 
+        row = QHBoxLayout()
         btn_export = QPushButton("Exporter XLSX")
         btn_export.clicked.connect(self.on_export)
-        outer.addWidget(btn_export)
-
+        btn_shp = QPushButton("Exporter poteaux (SHP)")
+        btn_shp.clicked.connect(self.on_export_shapefile)
+        row.addWidget(btn_export)
+        row.addWidget(btn_shp)
+        row.addStretch()
+        outer.addLayout(row)
         return tab
 
     # ------------------------------------------------------------- Couches
@@ -315,13 +414,17 @@ class CemNcvlDialog(QDialog):
 
         etat_poteau = self.cmb_etat_poteau.currentData()
         statut_cable = self.cmb_statut_cable.currentData()
+        territoire = self.cmb_territoire.currentData()
         pole_states = adapter.distinct_values(pole_layer, etat_poteau)
         cable_states = adapter.distinct_values(cable_layer, statut_cable)
+        territoires = (adapter.distinct_values(pole_layer, territoire)
+                       if territoire else [])
 
         self._populate_check_list(
             self.list_pole_states, pole_states, DEFAULT_POLE_STATES)
         self._populate_check_list(
             self.list_pulled, cable_states, DEFAULT_PULLED_STATUSES)
+        self._populate_check_list(self.list_territoires, territoires, [])
 
         n_poles = pole_layer.featureCount()
         n_cables = cable_layer.featureCount()
@@ -331,8 +434,10 @@ class CemNcvlDialog(QDialog):
             "Poteaux détectés : {}\n"
             "Câbles détectés : {}\n"
             "États poteau distincts : {}\n"
-            "Statuts câble distincts : {}".format(
-                n_poles, n_cables, len(pole_states), len(cable_states)))
+            "Statuts câble distincts : {}\n"
+            "Territoires distincts : {}".format(
+                n_poles, n_cables, len(pole_states), len(cable_states),
+                len(territoires)))
         self._save_settings()
 
     def on_analyse(self):
@@ -370,18 +475,82 @@ class CemNcvlDialog(QDialog):
 
         pole_states = self._checked_values(self.list_pole_states)
         pulled = self._checked_values(self.list_pulled)
+        territoires = self._checked_values(self.list_territoires)
         if not pole_states:
             pole_states = None  # aucun filtre => tous les poteaux
 
         self.rows, self.counters, self.cable_detail = analyze(
             self.poles, self.cables, pulled,
             buffer_m=self.spin_buffer.value(),
-            selected_pole_states=pole_states)
+            selected_pole_states=pole_states,
+            selected_territoires=territoires or None)
 
-        self._fill_result_table()
+        self._analysis_pole_layer = pole_layer
+        self.txt_filter.blockSignals(True)
+        self.txt_filter.clear()
+        self.txt_filter.blockSignals(False)
+
+        self._fill_result_table(self.rows)
         self._fill_recap_table()
         self._update_counters()
         self._save_settings()
+
+    def on_zoom(self):
+        if self.iface is None:
+            return
+        row = self.table.currentRow()
+        item = self.table.item(row, 0) if row >= 0 else None
+        if item is None:
+            QMessageBox.information(
+                self, "Zoom",
+                "Sélectionnez d'abord un poteau dans le tableau.")
+            return
+        fid = item.data(Qt.ItemDataRole.UserRole)
+        layer = self._analysis_pole_layer
+        if layer is None or fid is None:
+            QMessageBox.warning(
+                self, "Zoom",
+                "Impossible de localiser ce poteau (relancez l'analyse).")
+            return
+        layer.removeSelection()
+        layer.selectByIds([fid])
+        canvas = self.iface.mapCanvas()
+        canvas.zoomToSelected(layer)
+        if canvas.scale() < 1000:
+            canvas.zoomScale(1000)
+        try:
+            canvas.flashFeatureIds(layer, [fid])
+        except Exception:  # noqa: BLE001 - flash purement cosmétique
+            pass
+        canvas.refresh()
+
+    def on_export_shapefile(self):
+        if not self.rows:
+            QMessageBox.warning(
+                self, "Rien à exporter",
+                "Lancez d'abord une analyse produisant des poteaux.")
+            return
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Exporter les poteaux (shapefile)",
+            "poteaux_sans_cable_tire.shp", "Shapefile (*.shp)")
+        if not path:
+            return
+        if not path.lower().endswith(".shp"):
+            path += ".shp"
+        try:
+            n = adapter.export_poles_shapefile(
+                path, self.rows, adapter.TARGET_CRS_AUTHID)
+        except Exception as exc:  # noqa: BLE001
+            QMessageBox.critical(
+                self, "Erreur export",
+                "Export shapefile impossible :\n{}".format(exc))
+            return
+        if self.iface is not None:
+            name = os.path.splitext(os.path.basename(path))[0]
+            self.iface.addVectorLayer(path, name, "ogr")
+        QMessageBox.information(
+            self, "Export terminé",
+            "{} poteaux exportés :\n{}".format(n, os.path.abspath(path)))
 
     def on_export(self):
         if not self.rows and not self.counters:
@@ -406,6 +575,8 @@ class CemNcvlDialog(QDialog):
             "champ_ref_cable": self.cmb_ref_cable.currentData() or "(aucun)",
             "etats_poteau_retenus":
                 self._checked_values(self.list_pole_states) or ["(tous)"],
+            "territoires_retenus":
+                self._checked_values(self.list_territoires) or ["(tous)"],
             "statuts_tires": self._checked_values(self.list_pulled),
             "buffer_m": self.spin_buffer.value(),
             "crs_analyse": adapter.TARGET_CRS_AUTHID,
@@ -428,14 +599,33 @@ class CemNcvlDialog(QDialog):
             "Fichier généré :\n{}".format(os.path.abspath(path)))
 
     # ------------------------------------------------------------- Affichage
-    def _fill_result_table(self):
+    def _fill_result_table(self, rows):
+        self._visible_rows = rows
         keys = [key for key, _ in POLE_COLUMNS]
-        self.table.setRowCount(len(self.rows))
-        for r, row in enumerate(self.rows):
+        self.table.setSortingEnabled(False)
+        self.table.setRowCount(len(rows))
+        for r, row in enumerate(rows):
             for c, key in enumerate(keys):
-                self.table.setItem(
-                    r, c, QTableWidgetItem(str(row.get(key, ""))))
+                item = QTableWidgetItem(str(row.get(key, "")))
+                if c == 0:
+                    # On attache le fid à la 1re cellule : le zoom reste fiable
+                    # même après un tri de colonnes par l'utilisateur.
+                    item.setData(Qt.ItemDataRole.UserRole, row.get("_fid"))
+                self.table.setItem(r, c, item)
+        self.table.setSortingEnabled(True)
         self.table.resizeColumnsToContents()
+
+    def _apply_table_filter(self, text):
+        text = (text or "").strip().lower()
+        if not text:
+            self._fill_result_table(self.rows)
+            return
+        keys = [key for key, _ in POLE_COLUMNS]
+        filtered = [
+            row for row in self.rows
+            if any(text in str(row.get(key, "")).lower() for key in keys)
+        ]
+        self._fill_result_table(filtered)
 
     def _fill_recap_table(self):
         syntheses = build_syntheses(self.rows, self.cable_detail)

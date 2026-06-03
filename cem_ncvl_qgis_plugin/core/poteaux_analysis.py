@@ -39,7 +39,7 @@ def _join(values, sep=" ; "):
 
 
 def analyze(poles, cables, pulled_statuses, buffer_m=DEFAULT_BUFFER_M,
-            selected_pole_states=None):
+            selected_pole_states=None, selected_territoires=None):
     """Analyse les poteaux et renvoie ``(rows, counters, cable_detail)``.
 
     Paramètres
@@ -50,6 +50,8 @@ def analyze(poles, cables, pulled_statuses, buffer_m=DEFAULT_BUFFER_M,
     buffer_m : rayon de recherche autour du poteau, en mètres.
     selected_pole_states : itérable de libellés d'état poteau à analyser.
         ``None`` => tous les poteaux sont analysés (pas de filtre d'état).
+    selected_territoires : itérable de libellés de territoire / plaque à
+        analyser. ``None`` ou vide => aucun filtre territoire.
 
     Retour
     ------
@@ -64,6 +66,9 @@ def analyze(poles, cables, pulled_statuses, buffer_m=DEFAULT_BUFFER_M,
     pole_states_norm = None
     if selected_pole_states is not None:
         pole_states_norm = {normalize_status(s) for s in selected_pole_states}
+    territoires_norm = None
+    if selected_territoires:
+        territoires_norm = {normalize_status(t) for t in selected_territoires}
 
     # Index spatial des câbles (pré-filtre par bounding box).
     cell = max(float(buffer_m), 1.0)
@@ -87,6 +92,10 @@ def analyze(poles, cables, pulled_statuses, buffer_m=DEFAULT_BUFFER_M,
     for pole in poles:
         if pole_states_norm is not None:
             if normalize_status(pole.state) not in pole_states_norm:
+                continue
+        if territoires_norm is not None:
+            terr = pole.attrs.get("territoire")
+            if normalize_status(terr) not in territoires_norm:
                 continue
         counters["poles_selected"] += 1
 
@@ -126,6 +135,10 @@ def analyze(poles, cables, pulled_statuses, buffer_m=DEFAULT_BUFFER_M,
             "rayon_buffer_m": buffer_m,
             "nb_cables_intersectes": len(linked),
             "mode_rattachement": MODE_RATTACHEMENT,
+            # Clés techniques (préfixe _) non affichées / non exportées en XLSX :
+            # servent au zoom carte et à l'export shapefile.
+            "_fid": pole.fid,
+            "_xy": pole.xy,
         })
 
         for cable, dist in linked:
