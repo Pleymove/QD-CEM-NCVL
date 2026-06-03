@@ -8,28 +8,56 @@ Feuilles produites :
 - ``TCD``             : table à plat prête à pivoter.
 
 L'export ne dépend pas de QGIS : il peut être généré et testé hors QGIS.
+
+``openpyxl`` est importé de façon paresseuse : son absence n'empêche pas le
+chargement du plugin dans QGIS, seul l'export lève alors une erreur explicite.
 """
 
 from datetime import datetime
 
-from openpyxl import Workbook
-from openpyxl.styles import Alignment, Font, PatternFill
-from openpyxl.utils import get_column_letter
-from openpyxl.worksheet.table import Table, TableStyleInfo
-
 from .columns import POLE_COLUMNS, CABLE_COLUMNS
 from .synthese import build_syntheses, build_tcd_table, TCD_COLUMNS
 
-HEADER_FILL = PatternFill("solid", fgColor="1F4E78")
-HEADER_FONT = Font(bold=True, color="FFFFFF")
-TITLE_FONT = Font(bold=True, size=12, color="1F4E78")
+try:
+    from openpyxl import Workbook
+    from openpyxl.styles import Alignment, Font, PatternFill
+    from openpyxl.utils import get_column_letter
+    from openpyxl.worksheet.table import Table, TableStyleInfo
+    _OPENPYXL_IMPORT_ERROR = None
+except ImportError as exc:  # openpyxl absent de l'environnement QGIS
+    _OPENPYXL_IMPORT_ERROR = exc
+
+
+def _require_openpyxl():
+    if _OPENPYXL_IMPORT_ERROR is not None:
+        raise RuntimeError(
+            "Le module « openpyxl » est requis pour l'export XLSX mais n'est "
+            "pas installé dans l'environnement Python de QGIS.\n\n"
+            "Pour l'installer, ouvrez la Console Python de QGIS et exécutez :\n"
+            "    import pip; pip.main(['install', 'openpyxl'])\n"
+            "puis redémarrez QGIS."
+        )
+
+
+def _header_fill():
+    return PatternFill("solid", fgColor="1F4E78")
+
+
+def _header_font():
+    return Font(bold=True, color="FFFFFF")
+
+
+def _title_font():
+    return Font(bold=True, size=12, color="1F4E78")
 
 
 def _style_header(ws, row, ncols):
+    fill = _header_fill()
+    font = _header_font()
     for col in range(1, ncols + 1):
         cell = ws.cell(row=row, column=col)
-        cell.fill = HEADER_FILL
-        cell.font = HEADER_FONT
+        cell.fill = fill
+        cell.font = font
         cell.alignment = Alignment(vertical="center", wrap_text=True)
 
 
@@ -75,7 +103,7 @@ def _write_table_sheet(ws, columns, data, table_name):
 
 def _write_params_sheet(ws, params):
     ws["A1"] = "Paramètres de l'analyse CEM NCVL"
-    ws["A1"].font = TITLE_FONT
+    ws["A1"].font = _title_font()
     ws.append([])
     ws.append(["Paramètre", "Valeur"])
     _style_header(ws, 3, 2)
@@ -89,7 +117,7 @@ def _write_params_sheet(ws, params):
 
 def _write_synthese_sheet(ws, syntheses):
     ws["A1"] = "Synthèses"
-    ws["A1"].font = TITLE_FONT
+    ws["A1"].font = _title_font()
     current = 3
     for title, pairs in syntheses.items():
         ws.cell(row=current, column=1, value=title).font = Font(bold=True)
@@ -129,6 +157,7 @@ def _write_tcd_sheet(ws, tcd_rows):
 
 def build_workbook(rows, cable_detail, params):
     """Construit et renvoie le ``Workbook`` openpyxl (sans l'enregistrer)."""
+    _require_openpyxl()
     wb = Workbook()
 
     ws_params = wb.active
