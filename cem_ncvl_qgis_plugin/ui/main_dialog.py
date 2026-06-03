@@ -154,6 +154,7 @@ class CemNcvlDialog(QDialog):
 
         self.cmb_id_poteau = QComboBox()
         self.cmb_etat_poteau = QComboBox()
+        self.cmb_travaux = QComboBox()
         self.cmb_ref_cable = QComboBox()
         self.cmb_statut_cable = QComboBox()
         self.cmb_commune = QComboBox()
@@ -163,11 +164,15 @@ class CemNcvlDialog(QDialog):
         self.cmb_id_poteau.setToolTip("Champ identifiant du poteau (ex. num_appui)")
         self.cmb_etat_poteau.setToolTip("Champ d'état (ex. statut = 'plante')")
         self.cmb_statut_cable.setToolTip("Champ de statut du câble")
+        self.cmb_travaux.setToolTip(
+            "Champ « travaux » du support (ex. A poser, Remplacement…) — "
+            "affiché dans le tableau et les exports")
         self.cmb_territoire.setToolTip(
             "Champ territoire / plaque (sert au filtre et aux synthèses)")
 
         form.addRow("ID poteau *", self.cmb_id_poteau)
         form.addRow("État poteau *", self.cmb_etat_poteau)
+        form.addRow("Travaux", self.cmb_travaux)
         form.addRow("Référence câble", self.cmb_ref_cable)
         form.addRow("Statut câble *", self.cmb_statut_cable)
         form.addRow("Commune", self.cmb_commune)
@@ -329,6 +334,7 @@ class CemNcvlDialog(QDialog):
         fields = adapter.field_names(self._pole_layer())
         self._fill_field_combo(self.cmb_id_poteau, fields, "id_poteau")
         self._fill_field_combo(self.cmb_etat_poteau, fields, "etat_poteau")
+        self._fill_field_combo(self.cmb_travaux, fields, "travaux", True)
         self._fill_field_combo(self.cmb_commune, fields, "commune", True)
         self._fill_field_combo(self.cmb_departement, fields, "departement",
                                True)
@@ -380,6 +386,7 @@ class CemNcvlDialog(QDialog):
             "commune": self.cmb_commune.currentData() or "",
             "departement": self.cmb_departement.currentData() or "",
             "territoire": self.cmb_territoire.currentData() or "",
+            "travaux": self.cmb_travaux.currentData() or "",
         }
 
     def _optional_cable_fields(self):
@@ -662,6 +669,8 @@ class CemNcvlDialog(QDialog):
                    self.cmb_id_poteau.currentData())
         s.setValue(SETTINGS_PREFIX + "etat_poteau",
                    self.cmb_etat_poteau.currentData())
+        s.setValue(SETTINGS_PREFIX + "travaux",
+                   self.cmb_travaux.currentData())
         s.setValue(SETTINGS_PREFIX + "ref_cable",
                    self.cmb_ref_cable.currentData())
         s.setValue(SETTINGS_PREFIX + "statut_cable",
@@ -689,6 +698,7 @@ class CemNcvlDialog(QDialog):
         self._on_cable_layer()
         self._restore_combo(self.cmb_id_poteau, "id_poteau")
         self._restore_combo(self.cmb_etat_poteau, "etat_poteau")
+        self._restore_combo(self.cmb_travaux, "travaux")
         self._restore_combo(self.cmb_ref_cable, "ref_cable")
         self._restore_combo(self.cmb_statut_cable, "statut_cable")
         self._restore_combo(self.cmb_commune, "commune")

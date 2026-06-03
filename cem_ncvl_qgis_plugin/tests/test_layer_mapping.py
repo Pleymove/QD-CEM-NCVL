@@ -16,6 +16,13 @@ def test_guess_field_exact_before_substring():
     assert guess_field(fields, "commune") == "commune"
 
 
+def test_guess_field_travaux():
+    fields = ["statut", "travaux", "commune"]
+    assert guess_field(fields, "travaux") == "travaux"
+    # l'état poteau ne doit plus être deviné comme 'travaux'
+    assert guess_field(fields, "etat_poteau") == "statut"
+
+
 def test_guess_field_status():
     assert guess_field(["statut", "ref_cable"], "statut_cable") == "statut"
     assert guess_field(["ref_cable", "statut"], "ref_cable") == "ref_cable"
