@@ -118,6 +118,22 @@ conservant les libellés source à l'export.
 Poteaux analysés · poteaux remplacés / implantés · câbles analysés · poteaux
 sans câble tiré · nombre de statuts câble distincts.
 
+### Filtre territoire / plaque
+
+En plus des états poteau et des statuts câble, une troisième multi-sélection
+permet de **restreindre l'analyse à un ou plusieurs territoires / plaques**
+(valeurs issues du champ « Territoire / plaque »). Laisser la liste vide =
+analyser tous les territoires.
+
+### Tableau interactif
+
+- **Filtre texte** au-dessus du tableau (ID, commune, motif…).
+- **Tri** par clic sur les en-têtes de colonnes.
+- **Zoom carte** : sélectionner une ligne puis cliquer **Zoomer sur le poteau**
+  (ou double-cliquer la ligne) → QGIS centre et fait clignoter le poteau.
+- **Exporter poteaux (SHP)** : génère un **shapefile** ponctuel (EPSG:2154) des
+  poteaux sortis, avec les colonnes d'analyse, et l'ajoute au projet QGIS.
+
 ---
 
 ## 5. Export XLSX

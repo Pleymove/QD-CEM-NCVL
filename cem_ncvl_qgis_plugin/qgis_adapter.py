@@ -127,6 +127,7 @@ def extract_poles(layer, id_field, state_field, optional_fields=None,
             state="" if state is None else str(state),
             xy=xy,
             attrs=_attrs(feature, optional_fields),
+            fid=feature.id(),
         ))
     return poles
 
@@ -158,3 +159,66 @@ def is_point_layer(layer):
 
 def is_line_layer(layer):
     return layer is not None and layer.geometryType() == _LINE_GEOM
+
+
+# Correspondance (clé interne du résultat -> nom de champ shapefile, type).
+# Les noms shapefile sont limités à 10 caractères (contrainte du format DBF).
+SHP_FIELDS = [
+    ("id_poteau", "id_poteau", "string"),
+    ("commune", "commune", "string"),
+    ("departement", "dept", "string"),
+    ("territoire", "territoire", "string"),
+    ("etat_poteau", "etat_pot", "string"),
+    ("nb_cables", "nb_cables", "integer"),
+    ("etats_cables", "etats_cab", "string"),
+    ("cables_associes", "cables", "string"),
+    ("cables_non_tires", "cab_non_t", "string"),
+    ("motif", "motif", "string"),
+    ("rayon_buffer_m", "buffer_m", "double"),
+    ("nb_cables_intersectes", "nb_inter", "integer"),
+    ("mode_rattachement", "mode_ratt", "string"),
+]
+
+
+def export_poles_shapefile(path, rows, crs_authid=TARGET_CRS_AUTHID):
+    """Écrit un shapefile ponctuel des poteaux sortis par l'analyse.
+
+    Les géométries proviennent de la clé technique ``_xy`` des lignes résultat
+    (déjà en EPSG:2154). Renvoie le nombre d'entités écrites.
+    """
+    from qgis.core import (
+        QgsFeature, QgsGeometry, QgsPointXY, QgsVectorFileWriter,
+    )
+
+    # On déclare les types de champ directement dans l'URI de la couche
+    # mémoire : robuste quelle que soit la version (pas de QVariant/QMetaType).
+    uri_parts = ["Point?crs=" + crs_authid]
+    for _, shp_name, shp_type in SHP_FIELDS:
+        uri_parts.append("field={}:{}".format(shp_name, shp_type))
+    mem = QgsVectorLayer("&".join(uri_parts), "poteaux_sans_cable_tire",
+                         "memory")
+    provider = mem.dataProvider()
+
+    features = []
+    for row in rows:
+        feat = QgsFeature(mem.fields())
+        xy = row.get("_xy")
+        if xy is not None:
+            feat.setGeometry(QgsGeometry.fromPointXY(QgsPointXY(xy[0], xy[1])))
+        for internal, shp_name, _ in SHP_FIELDS:
+            feat.setAttribute(shp_name, row.get(internal))
+        features.append(feat)
+    provider.addFeatures(features)
+    mem.updateExtents()
+
+    options = QgsVectorFileWriter.SaveVectorOptions()
+    options.driverName = "ESRI Shapefile"
+    options.fileEncoding = "UTF-8"
+    context = QgsProject.instance().transformContext()
+    result = QgsVectorFileWriter.writeAsVectorFormatV3(
+        mem, path, context, options)
+    # writeAsVectorFormatV3 renvoie un tuple dont le 1er élément est le code
+    # d'erreur (0 = NoError quelle que soit la version).
+    if int(result[0]) != 0:
+        raise RuntimeError(result[1] or "Échec de l'écriture du shapefile.")
+    return mem.featureCount()

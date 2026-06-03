@@ -17,6 +17,7 @@ class Pole:
     state: str
     xy: tuple = None  # (x, y) en CRS métrique, ou None si géométrie absente
     attrs: dict = field(default_factory=dict)
+    fid: object = None  # identifiant d'entité QGIS (pour zoom / export)
 
 
 @dataclass
