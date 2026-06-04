@@ -263,12 +263,13 @@ def build_gc_params(context):
         ("etats_gc_retenus", "États GC retenus (travaux faits)"),
         ("territoires_retenus", "Territoires / plaques retenus"),
         ("statuts_tires", "Statuts câble « tirés »"),
-        ("buffer_m", "Rayon buffer (m)"),
+        ("buffer_m", "Tolérance rattachement (m)"),
+        ("seuil_reste_optique", "Seuil reste optique (ml)"),
         ("crs_analyse", "CRS d'analyse"),
         ("gc_total", "GC analysés"),
         ("gc_selectionnes", "GC travaux faits"),
         ("cables_total", "Câbles analysés"),
-        ("gc_sans_cable_tire", "GC sans câble tiré"),
+        ("gc_reste_optique", "GC avec reste optique > seuil"),
     ]
     return _ordered_params(dict(context or {}), ordered_labels)
 

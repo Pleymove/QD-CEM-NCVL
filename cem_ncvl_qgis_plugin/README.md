@@ -173,17 +173,36 @@ travaux sont faits** mais pour lesquelles **aucun câble rattaché n'est tiré**
 `nom` (sinon l'ID), suivi travaux `suivi_pilotage`, plaque `plaque`, commune
 `commune`, longueur `ml_calc`/`ml`.
 
-**Règle métier** :
+**Règle métier (depuis la 1.1.1 — reste à faire en optique)** :
 1. ne retenir que les GC « travaux faits » (par défaut `suivi_pilotage` ∈
    {`TRX fini`, `facturation`}, modifiable) ;
-2. rattacher les câbles par **intersection ligne↔ligne** en EPSG:2154, avec une
-   **tolérance paramétrable** (par défaut **1 m** ; `0` = intersection stricte) ;
-3. sortir le GC si **aucun** câble rattaché n'est tiré
-   (`Aucun câble associé au GC` ou `Aucun câble au statut tiré sur GC`).
+2. rattacher les câbles par **intersection / proximité ligne↔ligne** en
+   EPSG:2154, avec une **tolérance paramétrable** (par défaut **1 m**) ;
+3. calculer le **linéaire restant sans optique** :
+   `ML restant optique = longueur GC totale − longueur couverte par câble tiré` ;
+4. sortir le GC (motif **`Reste à faire en optique`**) si ce reste est
+   **strictement supérieur** au **seuil paramétrable** (`Seuil reste optique`,
+   **50 ml** par défaut, sauvegardé via `QSettings`).
 
-**Restitutions** : tableau dédié (avec zoom carte et tri/filtre), **export
-shapefile** linéaire des GC sortis, et **export XLSX** propre (feuilles
-`Paramètres`, `GC souterrains`, `Câbles associés`, `Synthèse`, `TCD`).
+> Un câble **non tiré** ne « couvre » pas optiquement le GC ; seuls les câbles
+> aux statuts tirés (`Tiré`, `Tirage fini`) réduisent le reste. Un GC sans
+> câble (ou sans câble tiré) ressort donc dès que sa longueur dépasse le seuil.
+
+**Calcul de la longueur couverte (approximation documentée)** : la couverture
+est mesurée par **échantillonnage** le long du GC (pas ≈ 2 m). Chaque
+sous-segment est compté couvert si son milieu est à ≤ tolérance d'un câble
+tiré. Le test étant binaire par sous-segment, l'**union est implicite** : pas
+de **double comptage** quand plusieurs câbles se superposent. La précision est
+de l'ordre du pas d'échantillonnage. La longueur totale est calculée sur la
+géométrie reprojetée en EPSG:2154 (cohérente avec la couverture).
+
+**Colonnes ajoutées** : `Longueur GC totale (m)`, `Longueur couverte optique
+(m)`, `ML restant optique (m)`, `Seuil reste optique (ml)`, et le motif.
+
+**Restitutions** : tableau dédié (zoom carte, tri/filtre), **export shapefile**
+linéaire des GC sortis (champs `lgc_tot`, `lgc_couv`, `ml_rest`, `seuil_ml`,
+`motif`…), et **export XLSX** (feuilles `Paramètres`, `GC souterrains`,
+`Câbles associés`, `Synthèse`, `TCD`).
 
 ---
 

@@ -15,7 +15,7 @@ from qgis.PyQt.QtCore import Qt, QSettings
 from qgis.PyQt.QtWidgets import (
     QAbstractItemView, QComboBox, QDoubleSpinBox, QFileDialog, QFormLayout,
     QGroupBox, QHBoxLayout, QLabel, QLineEdit, QListWidget, QListWidgetItem,
-    QMessageBox, QPushButton, QScrollArea, QSplitter, QTableWidget,
+    QMessageBox, QPushButton, QScrollArea, QSpinBox, QSplitter, QTableWidget,
     QTableWidgetItem, QVBoxLayout, QWidget,
 )
 
@@ -26,6 +26,7 @@ from ..core.cable_filters import DEFAULT_PULLED_STATUSES
 from ..core.columns import GC_COLUMNS
 from ..core.gc_analysis import (
     analyze_gc, DEFAULT_GC_BUFFER_M, DEFAULT_GC_DONE_STATES,
+    DEFAULT_RESTE_SEUIL_ML,
 )
 from ..core.normalize import normalize_status
 
@@ -164,8 +165,17 @@ class GcAnalysisTab(QWidget):
         self.spin_buffer.setSuffix(" m")
         self.spin_buffer.setToolTip(
             "Tolérance de rattachement câble↔GC (0 = intersection stricte). "
-            "Analyse en EPSG:2154.")
+            "Sert aussi à mesurer la couverture optique. Analyse en EPSG:2154.")
         form.addRow("Tolérance de rattachement", self.spin_buffer)
+
+        self.spin_seuil = QSpinBox()
+        self.spin_seuil.setRange(0, 1000000)
+        self.spin_seuil.setValue(int(DEFAULT_RESTE_SEUIL_ML))
+        self.spin_seuil.setSuffix(" ml")
+        self.spin_seuil.setToolTip(
+            "Un GC ressort si le linéaire restant sans optique dépasse "
+            "strictement ce seuil (par défaut 50 ml).")
+        form.addRow("Seuil reste optique (ml)", self.spin_seuil)
 
         btn_test = QPushButton("Tester les couches / champs")
         btn_test.clicked.connect(self.on_test)
@@ -426,7 +436,8 @@ class GcAnalysisTab(QWidget):
             gcs, cables, pulled,
             buffer_m=self.spin_buffer.value(),
             selected_done_states=done_states or None,
-            selected_territoires=territoires or None)
+            selected_territoires=territoires or None,
+            seuil_reste_ml=float(self.spin_seuil.value()))
 
         self._analysis_gc_layer = gc_layer
         self.txt_filter.blockSignals(True)
@@ -517,11 +528,12 @@ class GcAnalysisTab(QWidget):
                 self._checked_values(self.list_territoires) or ["(tous)"],
             "statuts_tires": self._checked_values(self.list_pulled),
             "buffer_m": self.spin_buffer.value(),
+            "seuil_reste_optique": self.spin_seuil.value(),
             "crs_analyse": adapter.TARGET_CRS_AUTHID,
             "gc_total": self.counters.get("gc_total", 0),
             "gc_selectionnes": self.counters.get("gc_selected", 0),
             "cables_total": self.counters.get("cables_total", 0),
-            "gc_sans_cable_tire": self.counters.get("gc_without_pulled", 0),
+            "gc_reste_optique": self.counters.get("gc_reste_optique", 0),
         }
         params = export_xlsx.build_gc_params(context)
         try:
@@ -567,7 +579,7 @@ class GcAnalysisTab(QWidget):
             "GC analysés : {gc_total}   |   "
             "GC travaux faits : {gc_selected}   |   "
             "Câbles analysés : {cables_total}   |   "
-            "GC sans câble tiré : {gc_without_pulled}   |   "
+            "GC reste optique > seuil : {gc_reste_optique}   |   "
             "Statuts câble distincts : {cable_status_distinct}".format(**c))
 
     # -------------------------------------------------------------- QSettings
@@ -589,6 +601,7 @@ class GcAnalysisTab(QWidget):
         for key, value in mapping.items():
             s.setValue(SETTINGS_PREFIX + key, value)
         s.setValue(SETTINGS_PREFIX + "buffer", self.spin_buffer.value())
+        s.setValue(SETTINGS_PREFIX + "seuil_reste", self.spin_seuil.value())
 
     def _restore_combo(self, combo, key, by_data=True):
         value = self.settings.value(SETTINGS_PREFIX + key, None)
@@ -616,5 +629,11 @@ class GcAnalysisTab(QWidget):
         if buffer_value not in (None, ""):
             try:
                 self.spin_buffer.setValue(float(buffer_value))
+            except (TypeError, ValueError):
+                pass
+        seuil_value = self.settings.value(SETTINGS_PREFIX + "seuil_reste", None)
+        if seuil_value not in (None, ""):
+            try:
+                self.spin_seuil.setValue(int(float(seuil_value)))
             except (TypeError, ValueError):
                 pass
