@@ -1,8 +1,9 @@
 import math
 
 from cem_ncvl_qgis_plugin.core.geometry import (
-    bbox_of_lines, multiline_multiline_distance, point_multiline_distance,
-    point_polyline_distance, polyline_polyline_distance,
+    bbox_of_lines, covered_length, multiline_length,
+    multiline_multiline_distance, point_multiline_distance,
+    point_polyline_distance, polyline_length, polyline_polyline_distance,
     segment_segment_distance, segments_intersect, SpatialGrid,
 )
 
@@ -60,6 +61,29 @@ def test_multiline_multiline_distance_intersecting():
     gc = [[(0.0, 0.0), (100.0, 0.0)]]
     cable = [[(50.0, -10.0), (50.0, 10.0)]]
     assert multiline_multiline_distance(gc, cable) == 0.0
+
+
+def test_polyline_and_multiline_length():
+    assert polyline_length([(0.0, 0.0), (3.0, 4.0)]) == 5.0
+    assert multiline_length(
+        [[(0.0, 0.0), (3.0, 4.0)], [(0.0, 0.0), (0.0, 10.0)]]) == 15.0
+
+
+def test_covered_length_full_and_none():
+    gc = [[(0.0, 0.0), (100.0, 0.0)]]
+    cover_full = [[[(0.0, 0.5), (100.0, 0.5)]]]
+    assert covered_length(gc, cover_full, 1.0) >= 99.0
+    assert covered_length(gc, [], 1.0) == 0.0
+
+
+def test_covered_length_partial_no_double_count():
+    gc = [[(0.0, 0.0), (100.0, 0.0)]]
+    one = [[[(0.0, 0.5), (40.0, 0.5)]]]
+    two = [[[(0.0, 0.5), (40.0, 0.5)]], [[(0.0, 0.5), (40.0, 0.5)]]]
+    cov_one = covered_length(gc, one, 1.0)
+    cov_two = covered_length(gc, two, 1.0)
+    assert 38.0 <= cov_one <= 43.0
+    assert abs(cov_one - cov_two) < 1e-6  # superposition => pas de double compte
 
 
 def test_spatial_grid_query_finds_overlapping():

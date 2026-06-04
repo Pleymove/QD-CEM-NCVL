@@ -144,6 +144,77 @@ def multiline_multiline_distance(lines_a, lines_b):
     return best
 
 
+def polyline_length(line):
+    """Longueur d'une polyligne [(x, y), ...] (CRS métrique)."""
+    total = 0.0
+    for i in range(len(line) - 1):
+        ax, ay = line[i]
+        bx, by = line[i + 1]
+        total += math.hypot(bx - ax, by - ay)
+    return total
+
+
+def multiline_length(lines):
+    """Longueur totale d'une (multi)polyligne (liste de polylignes)."""
+    return sum(polyline_length(line) for line in lines)
+
+
+def _min_distance_point_to_multis(point, multis):
+    """Distance min d'un point à une liste de (multi)polylignes de couverture."""
+    best = INF
+    for lines in multis:
+        d = point_multiline_distance(point, lines)
+        if d < best:
+            best = d
+            if best == 0.0:
+                return 0.0
+    return best
+
+
+# Pas d'échantillonnage (m) pour le calcul de la longueur couverte. Plus le pas
+# est petit, plus le calcul est précis (et lent). 2 m est un bon compromis pour
+# un seuil métier de l'ordre de 50 m.
+COVER_SAMPLE_STEP_M = 2.0
+
+
+def covered_length(gc_lines, cover_multis, buffer_m,
+                   step=COVER_SAMPLE_STEP_M):
+    """Longueur de ``gc_lines`` couverte (à <= ``buffer_m``) par ``cover_multis``.
+
+    Approximation par **échantillonnage** : chaque segment du GC est découpé en
+    sous-segments d'environ ``step`` mètres ; un sous-segment est compté couvert
+    si son milieu est à <= ``buffer_m`` d'au moins une des géométries de
+    couverture. Le test étant binaire par sous-segment, l'union est implicite :
+    **pas de double comptage** si plusieurs câbles se superposent sur la même
+    portion. Précision de l'ordre de ``step``.
+
+    ``cover_multis`` est une liste de (multi)polylignes (une par câble couvrant).
+    """
+    if not cover_multis:
+        return 0.0
+    step = max(float(step), 1e-6)
+    covered = 0.0
+    for line in gc_lines:
+        for i in range(len(line) - 1):
+            ax, ay = line[i]
+            bx, by = line[i + 1]
+            seg_len = math.hypot(bx - ax, by - ay)
+            if seg_len == 0.0:
+                continue
+            n = int(math.ceil(seg_len / step))
+            if n < 1:
+                n = 1
+            sub = seg_len / n
+            for k in range(n):
+                t = (k + 0.5) / n
+                px = ax + t * (bx - ax)
+                py = ay + t * (by - ay)
+                if _min_distance_point_to_multis((px, py),
+                                                 cover_multis) <= buffer_m:
+                    covered += sub
+    return covered
+
+
 def bbox_of_lines(lines):
     """Bounding box (minx, miny, maxx, maxy) d'une (multi)polyligne, ou None."""
     minx = miny = INF

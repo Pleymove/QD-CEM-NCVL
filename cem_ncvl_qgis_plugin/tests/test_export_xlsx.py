@@ -53,9 +53,11 @@ def test_gc_export_creates_all_sheets(tmp_path):
     rows = [{
         "id_gc": "GC-A", "nom_gc": "GC-A", "commune": "Bordeaux",
         "departement": "33", "territoire": "P1", "suivi_pilotage": "TRX fini",
-        "longueur": "120", "nb_cables": 1, "etats_cables": "en_cours",
+        "longueur": "120", "longueur_gc_totale": 120.0,
+        "longueur_couverte": 40.0, "ml_restant_optique": 80.0,
+        "seuil_reste_optique": 50.0, "nb_cables": 1, "etats_cables": "en_cours",
         "cables_associes": "c1", "cables_non_tires": "en_cours",
-        "motif": "Aucun câble au statut tiré sur GC", "rayon_buffer_m": 1.0,
+        "motif": "Reste à faire en optique", "rayon_buffer_m": 1.0,
         "nb_cables_intersectes": 1, "mode_rattachement": "Spatial",
     }]
     cable_detail = [{
@@ -65,7 +67,7 @@ def test_gc_export_creates_all_sheets(tmp_path):
     }]
     params = build_gc_params({
         "couche_gc": "0_artere_gc", "buffer_m": 1.0,
-        "statuts_tires": ["Tiré", "Tirage fini"],
+        "seuil_reste_optique": 50, "statuts_tires": ["Tiré", "Tirage fini"],
     })
     path = tmp_path / "gc.xlsx"
     export_gc_xlsx(str(path), rows, cable_detail, params)
@@ -76,6 +78,8 @@ def test_gc_export_creates_all_sheets(tmp_path):
     ws = wb["GC souterrains"]
     assert ws["A1"].value == "ID GC"
     assert ws["A2"].value == "GC-A"
+    headers = [c.value for c in ws[1]]
+    assert "ML restant optique (m)" in headers
 
 
 def test_build_params_orders_known_keys_first():
