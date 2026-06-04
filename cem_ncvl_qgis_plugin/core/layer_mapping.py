@@ -17,6 +17,7 @@ LAYER_HINTS = {
     "poteaux": ["11_travaux_supports", "travaux_supports", "support",
                 "poteau", "appui"],
     "cables": ["0_cable_suivi", "cable_suivi", "cable", "câble"],
+    "gc": ["0_artere_gc", "artere_gc", "artere", "génie civil", "gc"],
 }
 
 FIELD_HINTS = {
@@ -29,6 +30,12 @@ FIELD_HINTS = {
     "departement": ["departement", "département", "dept", "dep"],
     "territoire": ["code_imputation", "zone_exe", "code_proje", "territoire",
                    "plaque", "secteur", "region"],
+    # GC souterrain (couche 0_artere_gc)
+    "id_gc": ["id_0", "id_gc", "id"],
+    "nom_gc": ["nom", "code_gc", "code", "libelle", "libellé"],
+    "suivi_pilotage": ["suivi_pilotage", "suivi", "pilotage", "etat_travaux"],
+    "plaque": ["plaque", "territoire", "secteur"],
+    "longueur": ["ml_calc", "ml", "longueur", "metrage", "long_calc"],
 }
 
 

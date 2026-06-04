@@ -1,78 +1,62 @@
-"""Fenêtre principale du plugin CEM NCVL — interface à onglets.
+"""Onglet « Analyse GC souterrain » du plugin CEM NCVL.
 
-Onglet 1 « Analyse poteaux » : sélection des couches, mapping des champs,
-test, filtres multi-sélection (état poteau / statut câble tiré / territoire),
-buffer, analyse, tableau résultat avec zoom carte et export shapefile.
+Sélection des couches GC / câble, mapping des champs GC, filtres (états
+travaux GC / statuts câble tirés / territoire), rattachement spatial
+ligne↔ligne en EPSG:2154, tableau résultat avec zoom carte et exports
+XLSX / shapefile.
 
-Onglet 2 « Récap TCD / export » : synthèses calculées et export XLSX.
-
-L'interface ne porte aucune logique métier : elle prépare les données via
-``qgis_adapter`` puis délègue à ``core`` (analyse, synthèses, export).
+Module d'interface uniquement : délègue l'extraction à ``qgis_adapter`` et la
+logique à ``core.gc_analysis`` / ``core.export_xlsx`` (testés hors QGIS).
 """
 
 import os
 
 from qgis.PyQt.QtCore import Qt, QSettings
 from qgis.PyQt.QtWidgets import (
-    QAbstractItemView, QComboBox, QDialog, QDoubleSpinBox, QFileDialog,
-    QFormLayout, QGroupBox, QHBoxLayout, QLabel, QLineEdit, QListWidget,
-    QListWidgetItem, QMessageBox, QPushButton, QScrollArea, QSplitter,
-    QTableWidget, QTableWidgetItem, QTabWidget, QVBoxLayout, QWidget,
+    QAbstractItemView, QComboBox, QDoubleSpinBox, QFileDialog, QFormLayout,
+    QGroupBox, QHBoxLayout, QLabel, QLineEdit, QListWidget, QListWidgetItem,
+    QMessageBox, QPushButton, QScrollArea, QSplitter, QTableWidget,
+    QTableWidgetItem, QVBoxLayout, QWidget,
 )
 
-from .gc_tab import GcAnalysisTab
 from .. import qgis_adapter as adapter
 from ..core import layer_mapping
-from ..core.cable_filters import DEFAULT_PULLED_STATUSES
-from ..core.columns import POLE_COLUMNS
-from ..core.poteaux_analysis import analyze, DEFAULT_BUFFER_M, DEFAULT_POLE_STATES
-from ..core.synthese import build_syntheses
 from ..core import export_xlsx
+from ..core.cable_filters import DEFAULT_PULLED_STATUSES
+from ..core.columns import GC_COLUMNS
+from ..core.gc_analysis import (
+    analyze_gc, DEFAULT_GC_BUFFER_M, DEFAULT_GC_DONE_STATES,
+)
 from ..core.normalize import normalize_status
 
-SETTINGS_PREFIX = "cem_ncvl_plugin/"
+SETTINGS_PREFIX = "cem_ncvl_plugin/gc_"
 
 
-class CemNcvlDialog(QDialog):
-    """Dialogue principal du plugin."""
+class GcAnalysisTab(QWidget):
+    """Widget de l'onglet d'analyse des GC souterrains."""
 
     def __init__(self, iface=None, parent=None):
         super().__init__(parent)
         self.iface = iface
         self.settings = QSettings()
 
-        self.poles = []
-        self.cables = []
         self.rows = []
         self.counters = {}
         self.cable_detail = []
-        self._visible_rows = []          # lignes actuellement affichées (filtre)
-        self._analysis_pole_layer = None  # couche source pour le zoom carte
+        self._analysis_gc_layer = None
+        self._layers = []
 
-        self.setWindowTitle("CEM NCVL — Poteaux sans câble tiré")
-        self.resize(1040, 760)
-
-        self.tabs = QTabWidget(self)
-        self.tabs.addTab(self._build_tab_analyse(), "Analyse poteaux")
-        self.gc_tab = GcAnalysisTab(self.iface, self)
-        self.tabs.addTab(self.gc_tab, "Analyse GC souterrain")
-        self.tabs.addTab(self._build_tab_recap(), "Récap TCD / export")
-
-        layout = QVBoxLayout(self)
-        layout.addWidget(self.tabs)
-
+        self._build_ui()
         self._reload_layers()
         self._load_settings()
 
     # ------------------------------------------------------------ UI helpers
     def _build_checklist_column(self, title, tooltip=""):
-        """Construit une colonne « titre + boutons Tout/Rien + liste cochable »."""
         col = QVBoxLayout()
         label = QLabel(title)
         if tooltip:
             label.setToolTip(tooltip)
         col.addWidget(label)
-
         buttons = QHBoxLayout()
         btn_all = QPushButton("Tout")
         btn_none = QPushButton("Rien")
@@ -82,11 +66,9 @@ class CemNcvlDialog(QDialog):
         buttons.addWidget(btn_none)
         buttons.addStretch()
         col.addLayout(buttons)
-
         widget = QListWidget()
         widget.setSelectionMode(QAbstractItemView.SelectionMode.NoSelection)
         col.addWidget(widget)
-
         btn_all.clicked.connect(lambda: self._set_all_checks(widget, True))
         btn_none.clicked.connect(lambda: self._set_all_checks(widget, False))
         return col, widget
@@ -97,28 +79,23 @@ class CemNcvlDialog(QDialog):
         for i in range(widget.count()):
             widget.item(i).setCheckState(state)
 
-    # ------------------------------------------------------------------ UI
-    def _build_tab_analyse(self):
-        tab = QWidget()
-        outer = QVBoxLayout(tab)
-
+    def _build_ui(self):
+        outer = QVBoxLayout(self)
         splitter = QSplitter(Qt.Orientation.Vertical)
         outer.addWidget(splitter)
 
-        # ============ Zone configuration (défilable) ============
         config = QWidget()
         cfg = QVBoxLayout(config)
-
         cfg.addWidget(self._build_box_layers())
         cfg.addWidget(self._build_box_filters())
 
-        btn_analyse = QPushButton("Analyser")
+        btn_analyse = QPushButton("Analyser les GC")
         btn_analyse.setMinimumHeight(34)
         btn_analyse.setStyleSheet("font-weight: bold;")
         btn_analyse.clicked.connect(self.on_analyse)
         cfg.addWidget(btn_analyse)
 
-        self.lbl_counters = QLabel("Aucune analyse lancée.")
+        self.lbl_counters = QLabel("Aucune analyse GC lancée.")
         self.lbl_counters.setWordWrap(True)
         self.lbl_counters.setStyleSheet("font-weight: bold; color: #1F4E78;")
         cfg.addWidget(self.lbl_counters)
@@ -128,73 +105,69 @@ class CemNcvlDialog(QDialog):
         scroll.setWidget(config)
         splitter.addWidget(scroll)
 
-        # ============ Zone résultats ============
         splitter.addWidget(self._build_results_widget())
         splitter.setStretchFactor(0, 0)
         splitter.setStretchFactor(1, 1)
         splitter.setSizes([400, 360])
-        return tab
 
     def _build_box_layers(self):
-        box = QGroupBox("1. Couches et champs")
+        box = QGroupBox("1. Couches et champs GC")
         form = QFormLayout(box)
 
-        self.cmb_pole_layer = QComboBox()
+        self.cmb_gc_layer = QComboBox()
         self.cmb_cable_layer = QComboBox()
-        self.cmb_pole_layer.currentIndexChanged.connect(self._on_pole_layer)
+        self.cmb_gc_layer.currentIndexChanged.connect(self._on_gc_layer)
         self.cmb_cable_layer.currentIndexChanged.connect(self._on_cable_layer)
 
         btn_reload = QPushButton("Recharger les couches")
         btn_reload.clicked.connect(self._reload_layers)
-        row_pole = QHBoxLayout()
-        row_pole.addWidget(self.cmb_pole_layer)
-        row_pole.addWidget(btn_reload)
-        wrap_pole = QWidget()
-        wrap_pole.setLayout(row_pole)
+        row_gc = QHBoxLayout()
+        row_gc.addWidget(self.cmb_gc_layer)
+        row_gc.addWidget(btn_reload)
+        wrap_gc = QWidget()
+        wrap_gc.setLayout(row_gc)
 
-        form.addRow("Couche poteaux *", wrap_pole)
+        form.addRow("Couche GC *", wrap_gc)
         form.addRow("Couche câbles *", self.cmb_cable_layer)
 
-        self.cmb_id_poteau = QComboBox()
-        self.cmb_etat_poteau = QComboBox()
-        self.cmb_travaux = QComboBox()
-        self.cmb_ref_cable = QComboBox()
+        self.cmb_id_gc = QComboBox()
+        self.cmb_nom_gc = QComboBox()
+        self.cmb_suivi = QComboBox()
         self.cmb_statut_cable = QComboBox()
+        self.cmb_ref_cable = QComboBox()
         self.cmb_commune = QComboBox()
         self.cmb_departement = QComboBox()
-        self.cmb_territoire = QComboBox()
+        self.cmb_plaque = QComboBox()
+        self.cmb_longueur = QComboBox()
 
-        self.cmb_id_poteau.setToolTip("Champ identifiant du poteau (ex. num_appui)")
-        self.cmb_etat_poteau.setToolTip("Champ d'état (ex. statut = 'plante')")
-        self.cmb_statut_cable.setToolTip("Champ de statut du câble")
-        self.cmb_travaux.setToolTip(
-            "Champ « travaux » du support (ex. A poser, Remplacement…) — "
-            "affiché dans le tableau et les exports")
-        self.cmb_territoire.setToolTip(
-            "Champ territoire / plaque (sert au filtre et aux synthèses)")
+        self.cmb_id_gc.setToolTip("Identifiant technique du GC (ex. id_0)")
+        self.cmb_nom_gc.setToolTip(
+            "Libellé / code GC affiché (ex. nom). Si vide, l'ID est utilisé.")
+        self.cmb_suivi.setToolTip("Champ de suivi des travaux GC (suivi_pilotage)")
+        self.cmb_plaque.setToolTip("Plaque / territoire (filtre et synthèses)")
 
-        form.addRow("ID poteau *", self.cmb_id_poteau)
-        form.addRow("État poteau *", self.cmb_etat_poteau)
-        form.addRow("Travaux", self.cmb_travaux)
-        form.addRow("Référence câble", self.cmb_ref_cable)
+        form.addRow("ID GC *", self.cmb_id_gc)
+        form.addRow("Nom / code GC", self.cmb_nom_gc)
+        form.addRow("Suivi travaux GC *", self.cmb_suivi)
         form.addRow("Statut câble *", self.cmb_statut_cable)
+        form.addRow("Référence câble", self.cmb_ref_cable)
         form.addRow("Commune", self.cmb_commune)
         form.addRow("Département", self.cmb_departement)
-        form.addRow("Territoire / plaque", self.cmb_territoire)
+        form.addRow("Plaque / territoire", self.cmb_plaque)
+        form.addRow("Longueur (ml)", self.cmb_longueur)
 
         self.spin_buffer = QDoubleSpinBox()
-        self.spin_buffer.setRange(0.1, 1000.0)
+        self.spin_buffer.setRange(0.0, 1000.0)
         self.spin_buffer.setDecimals(1)
         self.spin_buffer.setSingleStep(0.5)
-        self.spin_buffer.setValue(DEFAULT_BUFFER_M)
+        self.spin_buffer.setValue(DEFAULT_GC_BUFFER_M)
         self.spin_buffer.setSuffix(" m")
         self.spin_buffer.setToolTip(
-            "Rayon du buffer autour du poteau (analyse en EPSG:2154)")
-        form.addRow("Rayon de recherche autour du poteau", self.spin_buffer)
+            "Tolérance de rattachement câble↔GC (0 = intersection stricte). "
+            "Analyse en EPSG:2154.")
+        form.addRow("Tolérance de rattachement", self.spin_buffer)
 
         btn_test = QPushButton("Tester les couches / champs")
-        btn_test.setToolTip(
-            "Valide le mapping et charge les valeurs des filtres ci-dessous")
         btn_test.clicked.connect(self.on_test)
         form.addRow(btn_test)
         return box
@@ -202,18 +175,16 @@ class CemNcvlDialog(QDialog):
     def _build_box_filters(self):
         box = QGroupBox("2. Filtres métier (cliquer « Tester » pour les remplir)")
         h = QHBoxLayout(box)
-
-        col_pole, self.list_pole_states = self._build_checklist_column(
-            "États poteau à analyser",
-            "Cas client : famille « plante » (planté / remplacé / recalé)")
+        col_done, self.list_done = self._build_checklist_column(
+            "États GC « travaux faits »",
+            "Par défaut : TRX fini + facturation (modifiable)")
         col_pulled, self.list_pulled = self._build_checklist_column(
             "Statuts câble « tirés »",
-            "Un poteau sort si aucun câble rattaché n'a un de ces statuts")
+            "Un GC sort si aucun câble rattaché n'a un de ces statuts")
         col_terr, self.list_territoires = self._build_checklist_column(
             "Territoire / plaque",
             "Laisser vide = analyser tous les territoires")
-
-        h.addLayout(col_pole)
+        h.addLayout(col_done)
         h.addLayout(col_pulled)
         h.addLayout(col_terr)
         return box
@@ -225,24 +196,19 @@ class CemNcvlDialog(QDialog):
         bar = QHBoxLayout()
         self.txt_filter = QLineEdit()
         self.txt_filter.setPlaceholderText(
-            "Filtrer le tableau (ID, commune, motif…)")
+            "Filtrer le tableau (ID, nom, commune, motif…)")
         self.txt_filter.textChanged.connect(self._apply_table_filter)
         bar.addWidget(self.txt_filter, 1)
 
-        btn_zoom = QPushButton("Zoomer sur le poteau")
-        btn_zoom.setToolTip("Zoome sur le poteau sélectionné (ou double-clic)")
+        btn_zoom = QPushButton("Zoomer sur le GC")
         btn_zoom.clicked.connect(self.on_zoom)
         bar.addWidget(btn_zoom)
-
-        btn_shp = QPushButton("Exporter poteaux (SHP)")
-        btn_shp.setToolTip("Exporte les poteaux sortis en shapefile")
+        btn_shp = QPushButton("Exporter GC (SHP)")
         btn_shp.clicked.connect(self.on_export_shapefile)
         bar.addWidget(btn_shp)
-
         btn_xlsx = QPushButton("Exporter (XLSX)")
         btn_xlsx.clicked.connect(self.on_export)
         bar.addWidget(btn_xlsx)
-
         v.addLayout(bar)
 
         self.table = QTableWidget()
@@ -252,48 +218,21 @@ class CemNcvlDialog(QDialog):
             QAbstractItemView.SelectionBehavior.SelectRows)
         self.table.setSelectionMode(
             QAbstractItemView.SelectionMode.SingleSelection)
-        self.table.setColumnCount(len(POLE_COLUMNS))
+        self.table.setColumnCount(len(GC_COLUMNS))
         self.table.setHorizontalHeaderLabels(
-            [label for _, label in POLE_COLUMNS])
+            [label for _, label in GC_COLUMNS])
         self.table.horizontalHeader().setStretchLastSection(True)
         self.table.setSortingEnabled(True)
         self.table.cellDoubleClicked.connect(lambda *_: self.on_zoom())
         v.addWidget(self.table)
         return widget
 
-    def _build_tab_recap(self):
-        tab = QWidget()
-        outer = QVBoxLayout(tab)
-
-        outer.addWidget(QLabel(
-            "Synthèses calculées sur les poteaux sortis par l'analyse."))
-
-        self.table_recap = QTableWidget()
-        self.table_recap.setEditTriggers(
-            QAbstractItemView.EditTrigger.NoEditTriggers)
-        self.table_recap.setColumnCount(3)
-        self.table_recap.setHorizontalHeaderLabels(
-            ["Synthèse", "Valeur", "Nombre"])
-        self.table_recap.horizontalHeader().setStretchLastSection(True)
-        outer.addWidget(self.table_recap)
-
-        row = QHBoxLayout()
-        btn_export = QPushButton("Exporter XLSX")
-        btn_export.clicked.connect(self.on_export)
-        btn_shp = QPushButton("Exporter poteaux (SHP)")
-        btn_shp.clicked.connect(self.on_export_shapefile)
-        row.addWidget(btn_export)
-        row.addWidget(btn_shp)
-        row.addStretch()
-        outer.addLayout(row)
-        return tab
-
     # ------------------------------------------------------------- Couches
     def _reload_layers(self):
         self._layers = adapter.list_vector_layers()
-        self._fill_layer_combo(self.cmb_pole_layer, "poteaux")
+        self._fill_layer_combo(self.cmb_gc_layer, "gc")
         self._fill_layer_combo(self.cmb_cable_layer, "cables")
-        self._on_pole_layer()
+        self._on_gc_layer()
         self._on_cable_layer()
 
     def _fill_layer_combo(self, combo, role):
@@ -313,8 +252,8 @@ class CemNcvlDialog(QDialog):
             return None
         return self._layers[idx]
 
-    def _pole_layer(self):
-        return self._current_layer(self.cmb_pole_layer)
+    def _gc_layer(self):
+        return self._current_layer(self.cmb_gc_layer)
 
     def _cable_layer(self):
         return self._current_layer(self.cmb_cable_layer)
@@ -333,15 +272,16 @@ class CemNcvlDialog(QDialog):
                 combo.setCurrentIndex(index)
         combo.blockSignals(False)
 
-    def _on_pole_layer(self, *args):
-        fields = adapter.field_names(self._pole_layer())
-        self._fill_field_combo(self.cmb_id_poteau, fields, "id_poteau")
-        self._fill_field_combo(self.cmb_etat_poteau, fields, "etat_poteau")
-        self._fill_field_combo(self.cmb_travaux, fields, "travaux", True)
+    def _on_gc_layer(self, *args):
+        fields = adapter.field_names(self._gc_layer())
+        self._fill_field_combo(self.cmb_id_gc, fields, "id_gc")
+        self._fill_field_combo(self.cmb_nom_gc, fields, "nom_gc", True)
+        self._fill_field_combo(self.cmb_suivi, fields, "suivi_pilotage")
         self._fill_field_combo(self.cmb_commune, fields, "commune", True)
         self._fill_field_combo(self.cmb_departement, fields, "departement",
                                True)
-        self._fill_field_combo(self.cmb_territoire, fields, "territoire", True)
+        self._fill_field_combo(self.cmb_plaque, fields, "plaque", True)
+        self._fill_field_combo(self.cmb_longueur, fields, "longueur", True)
 
     def _on_cable_layer(self, *args):
         fields = adapter.field_names(self._cable_layer())
@@ -372,28 +312,27 @@ class CemNcvlDialog(QDialog):
     # ---------------------------------------------------------- Validation
     def _validate_mapping(self):
         errors = []
-        if self._pole_layer() is None:
-            errors.append("Sélectionnez une couche poteaux.")
+        if self._gc_layer() is None:
+            errors.append("Sélectionnez une couche GC.")
         if self._cable_layer() is None:
             errors.append("Sélectionnez une couche câbles.")
-        if not self.cmb_id_poteau.currentData():
-            errors.append("Champ « ID poteau » obligatoire.")
-        if not self.cmb_etat_poteau.currentData():
-            errors.append("Champ « État poteau » obligatoire.")
+        if not self.cmb_id_gc.currentData():
+            errors.append("Champ « ID GC » obligatoire.")
+        if not self.cmb_suivi.currentData():
+            errors.append("Champ « Suivi travaux GC » obligatoire.")
         if not self.cmb_statut_cable.currentData():
             errors.append("Champ « Statut câble » obligatoire.")
         return errors
 
-    def _optional_pole_fields(self):
+    def _gc_optional_fields(self):
         return {
             "commune": self.cmb_commune.currentData() or "",
             "departement": self.cmb_departement.currentData() or "",
-            "territoire": self.cmb_territoire.currentData() or "",
-            "travaux": self.cmb_travaux.currentData() or "",
+            "territoire": self.cmb_plaque.currentData() or "",
+            "longueur": self.cmb_longueur.currentData() or "",
         }
 
-    def _optional_cable_fields(self):
-        # Côté câble on peut réutiliser les mêmes rôles si les champs existent.
+    def _cable_optional_fields(self):
         fields = adapter.field_names(self._cable_layer())
         return {
             "commune": layer_mapping.guess_field(fields, "commune") or "",
@@ -409,45 +348,42 @@ class CemNcvlDialog(QDialog):
             QMessageBox.warning(self, "Champs manquants", "\n".join(errors))
             return
 
-        pole_layer = self._pole_layer()
+        gc_layer = self._gc_layer()
         cable_layer = self._cable_layer()
-        if not adapter.is_point_layer(pole_layer):
+        if not adapter.is_line_layer(gc_layer):
             QMessageBox.warning(
-                self, "Couche poteaux",
-                "La couche poteaux ne semble pas ponctuelle. "
-                "Le rattachement spatial attend des points.")
+                self, "Couche GC",
+                "La couche GC ne semble pas linéaire. Le rattachement "
+                "spatial attend des lignes.")
         if not adapter.is_line_layer(cable_layer):
             QMessageBox.warning(
                 self, "Couche câbles",
-                "La couche câbles ne semble pas linéaire. "
-                "Le rattachement spatial attend des lignes.")
+                "La couche câbles ne semble pas linéaire.")
 
-        etat_poteau = self.cmb_etat_poteau.currentData()
+        suivi = self.cmb_suivi.currentData()
         statut_cable = self.cmb_statut_cable.currentData()
-        territoire = self.cmb_territoire.currentData()
-        pole_states = adapter.distinct_values(pole_layer, etat_poteau)
+        plaque = self.cmb_plaque.currentData()
+        done_states = adapter.distinct_values(gc_layer, suivi)
         cable_states = adapter.distinct_values(cable_layer, statut_cable)
-        territoires = (adapter.distinct_values(pole_layer, territoire)
-                       if territoire else [])
+        territoires = (adapter.distinct_values(gc_layer, plaque)
+                       if plaque else [])
 
         self._populate_check_list(
-            self.list_pole_states, pole_states, DEFAULT_POLE_STATES)
+            self.list_done, done_states, DEFAULT_GC_DONE_STATES)
         self._populate_check_list(
             self.list_pulled, cable_states, DEFAULT_PULLED_STATUSES)
         self._populate_check_list(self.list_territoires, territoires, [])
 
-        n_poles = pole_layer.featureCount()
-        n_cables = cable_layer.featureCount()
         QMessageBox.information(
             self, "Test des couches",
             "Couches et champs valides.\n\n"
-            "Poteaux détectés : {}\n"
+            "GC détectés : {}\n"
             "Câbles détectés : {}\n"
-            "États poteau distincts : {}\n"
+            "États suivi GC distincts : {}\n"
             "Statuts câble distincts : {}\n"
             "Territoires distincts : {}".format(
-                n_poles, n_cables, len(pole_states), len(cable_states),
-                len(territoires)))
+                gc_layer.featureCount(), cable_layer.featureCount(),
+                len(done_states), len(cable_states), len(territoires)))
         self._save_settings()
 
     def on_analyse(self):
@@ -455,7 +391,6 @@ class CemNcvlDialog(QDialog):
         if errors:
             QMessageBox.warning(self, "Champs manquants", "\n".join(errors))
             return
-
         if self.list_pulled.count() == 0:
             QMessageBox.warning(
                 self, "Tester d'abord",
@@ -463,45 +398,41 @@ class CemNcvlDialog(QDialog):
                 "statuts détectés avant d'analyser.")
             return
 
-        pole_layer = self._pole_layer()
+        gc_layer = self._gc_layer()
         cable_layer = self._cable_layer()
-
         try:
-            self.poles = adapter.extract_poles(
-                pole_layer,
-                self.cmb_id_poteau.currentData(),
-                self.cmb_etat_poteau.currentData(),
-                self._optional_pole_fields())
-            self.cables = adapter.extract_cables(
+            gcs = adapter.extract_gc(
+                gc_layer,
+                self.cmb_id_gc.currentData(),
+                self.cmb_suivi.currentData(),
+                label_field=self.cmb_nom_gc.currentData() or None,
+                optional_fields=self._gc_optional_fields())
+            cables = adapter.extract_cables(
                 cable_layer,
                 self.cmb_statut_cable.currentData(),
                 self.cmb_ref_cable.currentData() or None,
-                self._optional_cable_fields())
-        except Exception as exc:  # noqa: BLE001 - message lisible utilisateur
+                self._cable_optional_fields())
+        except Exception as exc:  # noqa: BLE001
             QMessageBox.critical(
                 self, "Erreur d'extraction",
                 "Impossible de lire les couches :\n{}".format(exc))
             return
 
-        pole_states = self._checked_values(self.list_pole_states)
+        done_states = self._checked_values(self.list_done)
         pulled = self._checked_values(self.list_pulled)
         territoires = self._checked_values(self.list_territoires)
-        if not pole_states:
-            pole_states = None  # aucun filtre => tous les poteaux
 
-        self.rows, self.counters, self.cable_detail = analyze(
-            self.poles, self.cables, pulled,
+        self.rows, self.counters, self.cable_detail = analyze_gc(
+            gcs, cables, pulled,
             buffer_m=self.spin_buffer.value(),
-            selected_pole_states=pole_states,
+            selected_done_states=done_states or None,
             selected_territoires=territoires or None)
 
-        self._analysis_pole_layer = pole_layer
+        self._analysis_gc_layer = gc_layer
         self.txt_filter.blockSignals(True)
         self.txt_filter.clear()
         self.txt_filter.blockSignals(False)
-
         self._fill_result_table(self.rows)
-        self._fill_recap_table()
         self._update_counters()
         self._save_settings()
 
@@ -512,15 +443,14 @@ class CemNcvlDialog(QDialog):
         item = self.table.item(row, 0) if row >= 0 else None
         if item is None:
             QMessageBox.information(
-                self, "Zoom",
-                "Sélectionnez d'abord un poteau dans le tableau.")
+                self, "Zoom", "Sélectionnez d'abord un GC dans le tableau.")
             return
         fid = item.data(Qt.ItemDataRole.UserRole)
-        layer = self._analysis_pole_layer
+        layer = self._analysis_gc_layer
         if layer is None or fid is None:
             QMessageBox.warning(
                 self, "Zoom",
-                "Impossible de localiser ce poteau (relancez l'analyse).")
+                "Impossible de localiser ce GC (relancez l'analyse).")
             return
         layer.removeSelection()
         layer.selectByIds([fid])
@@ -530,7 +460,7 @@ class CemNcvlDialog(QDialog):
             canvas.zoomScale(1000)
         try:
             canvas.flashFeatureIds(layer, [fid])
-        except Exception:  # noqa: BLE001 - flash purement cosmétique
+        except Exception:  # noqa: BLE001
             pass
         canvas.refresh()
 
@@ -538,17 +468,17 @@ class CemNcvlDialog(QDialog):
         if not self.rows:
             QMessageBox.warning(
                 self, "Rien à exporter",
-                "Lancez d'abord une analyse produisant des poteaux.")
+                "Lancez d'abord une analyse produisant des GC.")
             return
         path, _ = QFileDialog.getSaveFileName(
-            self, "Exporter les poteaux (shapefile)",
-            "poteaux_sans_cable_tire.shp", "Shapefile (*.shp)")
+            self, "Exporter les GC (shapefile)",
+            "gc_sans_cable_tire.shp", "Shapefile (*.shp)")
         if not path:
             return
         if not path.lower().endswith(".shp"):
             path += ".shp"
         try:
-            n = adapter.export_poles_shapefile(
+            n = adapter.export_gc_shapefile(
                 path, self.rows, adapter.TARGET_CRS_AUTHID)
         except Exception as exc:  # noqa: BLE001
             QMessageBox.critical(
@@ -560,16 +490,15 @@ class CemNcvlDialog(QDialog):
             self.iface.addVectorLayer(path, name, "ogr")
         QMessageBox.information(
             self, "Export terminé",
-            "{} poteaux exportés :\n{}".format(n, os.path.abspath(path)))
+            "{} GC exportés :\n{}".format(n, os.path.abspath(path)))
 
     def on_export(self):
         if not self.rows and not self.counters:
             QMessageBox.warning(
-                self, "Rien à exporter",
-                "Lancez d'abord une analyse.")
+                self, "Rien à exporter", "Lancez d'abord une analyse GC.")
             return
         path, _ = QFileDialog.getSaveFileName(
-            self, "Exporter le résultat", "poteaux_sans_cable_tire.xlsx",
+            self, "Exporter le résultat GC", "gc_sans_cable_tire.xlsx",
             "Classeur Excel (*.xlsx)")
         if not path:
             return
@@ -577,28 +506,26 @@ class CemNcvlDialog(QDialog):
             path += ".xlsx"
 
         context = {
-            "couche_poteaux": self.cmb_pole_layer.currentText(),
+            "couche_gc": self.cmb_gc_layer.currentText(),
             "couche_cables": self.cmb_cable_layer.currentText(),
-            "champ_id_poteau": self.cmb_id_poteau.currentData(),
-            "champ_etat_poteau": self.cmb_etat_poteau.currentData(),
-            "champ_statut_cable": self.cmb_statut_cable.currentData(),
-            "champ_ref_cable": self.cmb_ref_cable.currentData() or "(aucun)",
-            "etats_poteau_retenus":
-                self._checked_values(self.list_pole_states) or ["(tous)"],
+            "champ_id_gc": self.cmb_id_gc.currentData(),
+            "champ_nom_gc": self.cmb_nom_gc.currentData() or "(aucun)",
+            "champ_suivi": self.cmb_suivi.currentData(),
+            "etats_gc_retenus":
+                self._checked_values(self.list_done) or ["(tous)"],
             "territoires_retenus":
                 self._checked_values(self.list_territoires) or ["(tous)"],
             "statuts_tires": self._checked_values(self.list_pulled),
             "buffer_m": self.spin_buffer.value(),
             "crs_analyse": adapter.TARGET_CRS_AUTHID,
-            "poteaux_total": self.counters.get("poles_total", 0),
-            "poteaux_selectionnes": self.counters.get("poles_selected", 0),
+            "gc_total": self.counters.get("gc_total", 0),
+            "gc_selectionnes": self.counters.get("gc_selected", 0),
             "cables_total": self.counters.get("cables_total", 0),
-            "poteaux_sans_cable_tire":
-                self.counters.get("poles_without_pulled", 0),
+            "gc_sans_cable_tire": self.counters.get("gc_without_pulled", 0),
         }
-        params = export_xlsx.build_params(context)
+        params = export_xlsx.build_gc_params(context)
         try:
-            export_xlsx.export_xlsx(
+            export_xlsx.export_gc_xlsx(
                 path, self.rows, self.cable_detail, params)
         except Exception as exc:  # noqa: BLE001
             QMessageBox.critical(
@@ -610,16 +537,13 @@ class CemNcvlDialog(QDialog):
 
     # ------------------------------------------------------------- Affichage
     def _fill_result_table(self, rows):
-        self._visible_rows = rows
-        keys = [key for key, _ in POLE_COLUMNS]
+        keys = [key for key, _ in GC_COLUMNS]
         self.table.setSortingEnabled(False)
         self.table.setRowCount(len(rows))
         for r, row in enumerate(rows):
             for c, key in enumerate(keys):
                 item = QTableWidgetItem(str(row.get(key, "")))
                 if c == 0:
-                    # On attache le fid à la 1re cellule : le zoom reste fiable
-                    # même après un tri de colonnes par l'utilisateur.
                     item.setData(Qt.ItemDataRole.UserRole, row.get("_fid"))
                 self.table.setItem(r, c, item)
         self.table.setSortingEnabled(True)
@@ -630,60 +554,40 @@ class CemNcvlDialog(QDialog):
         if not text:
             self._fill_result_table(self.rows)
             return
-        keys = [key for key, _ in POLE_COLUMNS]
+        keys = [key for key, _ in GC_COLUMNS]
         filtered = [
             row for row in self.rows
             if any(text in str(row.get(key, "")).lower() for key in keys)
         ]
         self._fill_result_table(filtered)
 
-    def _fill_recap_table(self):
-        syntheses = build_syntheses(self.rows, self.cable_detail)
-        flat = []
-        for title, pairs in syntheses.items():
-            if not pairs:
-                flat.append((title, "(aucun)", 0))
-            for label, nb in pairs:
-                flat.append((title, label, nb))
-        self.table_recap.setRowCount(len(flat))
-        for r, (title, label, nb) in enumerate(flat):
-            self.table_recap.setItem(r, 0, QTableWidgetItem(title))
-            self.table_recap.setItem(r, 1, QTableWidgetItem(str(label)))
-            self.table_recap.setItem(r, 2, QTableWidgetItem(str(nb)))
-        self.table_recap.resizeColumnsToContents()
-
     def _update_counters(self):
         c = self.counters
         self.lbl_counters.setText(
-            "Poteaux analysés : {poles_total}   |   "
-            "Poteaux remplacés / implantés : {poles_selected}   |   "
+            "GC analysés : {gc_total}   |   "
+            "GC travaux faits : {gc_selected}   |   "
             "Câbles analysés : {cables_total}   |   "
-            "Poteaux sans câble tiré : {poles_without_pulled}   |   "
+            "GC sans câble tiré : {gc_without_pulled}   |   "
             "Statuts câble distincts : {cable_status_distinct}".format(**c))
 
     # -------------------------------------------------------------- QSettings
     def _save_settings(self):
         s = self.settings
-        s.setValue(SETTINGS_PREFIX + "pole_layer",
-                   self.cmb_pole_layer.currentText())
-        s.setValue(SETTINGS_PREFIX + "cable_layer",
-                   self.cmb_cable_layer.currentText())
-        s.setValue(SETTINGS_PREFIX + "id_poteau",
-                   self.cmb_id_poteau.currentData())
-        s.setValue(SETTINGS_PREFIX + "etat_poteau",
-                   self.cmb_etat_poteau.currentData())
-        s.setValue(SETTINGS_PREFIX + "travaux",
-                   self.cmb_travaux.currentData())
-        s.setValue(SETTINGS_PREFIX + "ref_cable",
-                   self.cmb_ref_cable.currentData())
-        s.setValue(SETTINGS_PREFIX + "statut_cable",
-                   self.cmb_statut_cable.currentData())
-        s.setValue(SETTINGS_PREFIX + "commune",
-                   self.cmb_commune.currentData())
-        s.setValue(SETTINGS_PREFIX + "departement",
-                   self.cmb_departement.currentData())
-        s.setValue(SETTINGS_PREFIX + "territoire",
-                   self.cmb_territoire.currentData())
+        mapping = {
+            "gc_layer": self.cmb_gc_layer.currentText(),
+            "cable_layer": self.cmb_cable_layer.currentText(),
+            "id_gc": self.cmb_id_gc.currentData(),
+            "nom_gc": self.cmb_nom_gc.currentData(),
+            "suivi": self.cmb_suivi.currentData(),
+            "statut_cable": self.cmb_statut_cable.currentData(),
+            "ref_cable": self.cmb_ref_cable.currentData(),
+            "commune": self.cmb_commune.currentData(),
+            "departement": self.cmb_departement.currentData(),
+            "plaque": self.cmb_plaque.currentData(),
+            "longueur": self.cmb_longueur.currentData(),
+        }
+        for key, value in mapping.items():
+            s.setValue(SETTINGS_PREFIX + key, value)
         s.setValue(SETTINGS_PREFIX + "buffer", self.spin_buffer.value())
 
     def _restore_combo(self, combo, key, by_data=True):
@@ -695,18 +599,19 @@ class CemNcvlDialog(QDialog):
             combo.setCurrentIndex(index)
 
     def _load_settings(self):
-        self._restore_combo(self.cmb_pole_layer, "pole_layer", by_data=False)
+        self._restore_combo(self.cmb_gc_layer, "gc_layer", by_data=False)
         self._restore_combo(self.cmb_cable_layer, "cable_layer", by_data=False)
-        self._on_pole_layer()
+        self._on_gc_layer()
         self._on_cable_layer()
-        self._restore_combo(self.cmb_id_poteau, "id_poteau")
-        self._restore_combo(self.cmb_etat_poteau, "etat_poteau")
-        self._restore_combo(self.cmb_travaux, "travaux")
-        self._restore_combo(self.cmb_ref_cable, "ref_cable")
+        self._restore_combo(self.cmb_id_gc, "id_gc")
+        self._restore_combo(self.cmb_nom_gc, "nom_gc")
+        self._restore_combo(self.cmb_suivi, "suivi")
         self._restore_combo(self.cmb_statut_cable, "statut_cable")
+        self._restore_combo(self.cmb_ref_cable, "ref_cable")
         self._restore_combo(self.cmb_commune, "commune")
         self._restore_combo(self.cmb_departement, "departement")
-        self._restore_combo(self.cmb_territoire, "territoire")
+        self._restore_combo(self.cmb_plaque, "plaque")
+        self._restore_combo(self.cmb_longueur, "longueur")
         buffer_value = self.settings.value(SETTINGS_PREFIX + "buffer", None)
         if buffer_value not in (None, ""):
             try:

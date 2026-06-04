@@ -18,7 +18,7 @@ from qgis.core import (
     QgsVectorLayer,
 )
 
-from .core.models import Pole, Cable
+from .core.models import Pole, Cable, GcArtere
 
 TARGET_CRS_AUTHID = "EPSG:2154"
 
@@ -156,6 +156,38 @@ def extract_cables(layer, status_field, ref_field=None, optional_fields=None,
     return cables
 
 
+def extract_gc(layer, id_field, state_field, label_field=None,
+               optional_fields=None, target_authid=TARGET_CRS_AUTHID):
+    """Extrait les artères GC d'une couche linéaire vers des ``GcArtere``.
+
+    ``label_field`` (ex. ``nom``) sert de libellé si renseigné, sinon l'ID.
+    """
+    optional_fields = optional_fields or {}
+    target = QgsCoordinateReferenceSystem(target_authid)
+    transform = _transform_for(layer, target)
+
+    gcs = []
+    for feature in layer.getFeatures():
+        lines = _lines_xy(feature.geometry(), transform)
+        raw_id = feature[id_field]
+        id_str = "" if raw_id is None else str(raw_id)
+        label = id_str
+        if label_field:
+            value = feature[label_field]
+            if value is not None and str(value).strip():
+                label = str(value).strip()
+        state = feature[state_field]
+        gcs.append(GcArtere(
+            id=id_str,
+            label=label,
+            state="" if state is None else str(state),
+            lines=lines,
+            attrs=_attrs(feature, optional_fields),
+            fid=feature.id(),
+        ))
+    return gcs
+
+
 def is_point_layer(layer):
     return layer is not None and layer.geometryType() == _POINT_GEOM
 
@@ -223,6 +255,68 @@ def export_poles_shapefile(path, rows, crs_authid=TARGET_CRS_AUTHID):
         mem, path, context, options)
     # writeAsVectorFormatV3 renvoie un tuple dont le 1er élément est le code
     # d'erreur (0 = NoError quelle que soit la version).
+    if int(result[0]) != 0:
+        raise RuntimeError(result[1] or "Échec de l'écriture du shapefile.")
+    return mem.featureCount()
+
+
+# Champs du shapefile GC (nom <= 10 caractères, contrainte DBF).
+GC_SHP_FIELDS = [
+    ("id_gc", "id_gc", "string"),
+    ("nom_gc", "nom_gc", "string"),
+    ("commune", "commune", "string"),
+    ("departement", "dept", "string"),
+    ("territoire", "territoire", "string"),
+    ("suivi_pilotage", "suivi", "string"),
+    ("longueur", "longueur", "string"),
+    ("nb_cables", "nb_cables", "integer"),
+    ("etats_cables", "etats_cab", "string"),
+    ("cables_associes", "cables", "string"),
+    ("cables_non_tires", "cab_non_t", "string"),
+    ("motif", "motif", "string"),
+    ("rayon_buffer_m", "buffer_m", "double"),
+    ("nb_cables_intersectes", "nb_inter", "integer"),
+    ("mode_rattachement", "mode_ratt", "string"),
+]
+
+
+def export_gc_shapefile(path, rows, crs_authid=TARGET_CRS_AUTHID):
+    """Écrit un shapefile linéaire des GC sortis par l'analyse.
+
+    Les géométries proviennent de la clé technique ``_lines`` des lignes
+    résultat (déjà en EPSG:2154). Renvoie le nombre d'entités écrites.
+    """
+    from qgis.core import (
+        QgsFeature, QgsGeometry, QgsPointXY, QgsVectorFileWriter,
+    )
+
+    uri_parts = ["MultiLineString?crs=" + crs_authid]
+    for _, shp_name, shp_type in GC_SHP_FIELDS:
+        uri_parts.append("field={}:{}".format(shp_name, shp_type))
+    mem = QgsVectorLayer("&".join(uri_parts), "gc_sans_cable_tire", "memory")
+    provider = mem.dataProvider()
+
+    features = []
+    for row in rows:
+        feat = QgsFeature(mem.fields())
+        lines = row.get("_lines")
+        if lines:
+            multi = [[QgsPointXY(x, y) for (x, y) in line]
+                     for line in lines if line]
+            if multi:
+                feat.setGeometry(QgsGeometry.fromMultiPolylineXY(multi))
+        for internal, shp_name, _ in GC_SHP_FIELDS:
+            feat.setAttribute(shp_name, row.get(internal))
+        features.append(feat)
+    provider.addFeatures(features)
+    mem.updateExtents()
+
+    options = QgsVectorFileWriter.SaveVectorOptions()
+    options.driverName = "ESRI Shapefile"
+    options.fileEncoding = "UTF-8"
+    context = QgsProject.instance().transformContext()
+    result = QgsVectorFileWriter.writeAsVectorFormatV3(
+        mem, path, context, options)
     if int(result[0]) != 0:
         raise RuntimeError(result[1] or "Échec de l'écriture du shapefile.")
     return mem.featureCount()

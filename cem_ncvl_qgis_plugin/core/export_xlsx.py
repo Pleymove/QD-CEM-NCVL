@@ -15,8 +15,12 @@ chargement du plugin dans QGIS, seul l'export lève alors une erreur explicite.
 
 from datetime import datetime
 
-from .columns import POLE_COLUMNS, CABLE_COLUMNS
-from .synthese import build_syntheses, build_tcd_table, TCD_COLUMNS
+from .columns import (
+    POLE_COLUMNS, CABLE_COLUMNS, GC_COLUMNS, CABLE_GC_COLUMNS,
+)
+from .synthese import (
+    build_syntheses, build_tcd_table, TCD_COLUMNS, GC_TCD_COLUMNS,
+)
 
 try:
     from openpyxl import Workbook
@@ -134,9 +138,10 @@ def _write_synthese_sheet(ws, syntheses):
     _autosize(ws, 2, max_width=60)
 
 
-def _write_tcd_sheet(ws, tcd_rows):
-    labels = [label for _, label in TCD_COLUMNS] + ["Nb poteaux"]
-    keys = [key for key, _ in TCD_COLUMNS] + ["nb_poteaux"]
+def _write_tcd_sheet(ws, tcd_rows, dim_columns, measure_key, measure_label,
+                     table_name):
+    labels = [label for _, label in dim_columns] + [measure_label]
+    keys = [key for key, _ in dim_columns] + [measure_key]
     ws.append(labels)
     _style_header(ws, 1, len(labels))
     for row in tcd_rows:
@@ -144,7 +149,7 @@ def _write_tcd_sheet(ws, tcd_rows):
     ncols = len(labels)
     if tcd_rows:
         last = "{}{}".format(get_column_letter(ncols), len(tcd_rows) + 1)
-        table = Table(displayName="TCD_Poteaux", ref="A1:{}".format(last))
+        table = Table(displayName=table_name, ref="A1:{}".format(last))
         table.tableStyleInfo = TableStyleInfo(
             name="TableStyleMedium9", showRowStripes=True,
         )
@@ -155,8 +160,14 @@ def _write_tcd_sheet(ws, tcd_rows):
     _autosize(ws, ncols)
 
 
-def build_workbook(rows, cable_detail, params):
-    """Construit et renvoie le ``Workbook`` openpyxl (sans l'enregistrer)."""
+def _assemble_workbook(rows, cable_detail, params, *, list_columns,
+                       list_sheet, list_table, cable_columns, cable_sheet,
+                       cable_table, tcd_dims, tcd_measure_key,
+                       tcd_measure_label, tcd_table):
+    """Assemble un classeur 5 feuilles, paramétré par jeu de colonnes.
+
+    Mutualise la mise en forme entre l'export poteaux et l'export GC.
+    """
     _require_openpyxl()
     wb = Workbook()
 
@@ -165,23 +176,51 @@ def build_workbook(rows, cable_detail, params):
     _write_params_sheet(ws_params, params)
 
     _write_table_sheet(
-        wb.create_sheet("Liste poteaux"), POLE_COLUMNS, rows, "ListePoteaux",
-    )
+        wb.create_sheet(list_sheet), list_columns, rows, list_table)
     _write_table_sheet(
-        wb.create_sheet("Câbles associés"), CABLE_COLUMNS, cable_detail,
-        "CablesAssocies",
-    )
+        wb.create_sheet(cable_sheet), cable_columns, cable_detail, cable_table)
     _write_synthese_sheet(
-        wb.create_sheet("Synthèse"), build_syntheses(rows, cable_detail),
-    )
-    _write_tcd_sheet(wb.create_sheet("TCD"), build_tcd_table(rows))
+        wb.create_sheet("Synthèse"), build_syntheses(rows, cable_detail))
+    _write_tcd_sheet(
+        wb.create_sheet("TCD"),
+        build_tcd_table(rows, tcd_dims, tcd_measure_key),
+        tcd_dims, tcd_measure_key, tcd_measure_label, tcd_table)
     return wb
 
 
+def build_workbook(rows, cable_detail, params):
+    """Construit le classeur de l'analyse poteaux (sans l'enregistrer)."""
+    return _assemble_workbook(
+        rows, cable_detail, params,
+        list_columns=POLE_COLUMNS, list_sheet="Liste poteaux",
+        list_table="ListePoteaux",
+        cable_columns=CABLE_COLUMNS, cable_sheet="Câbles associés",
+        cable_table="CablesAssocies",
+        tcd_dims=TCD_COLUMNS, tcd_measure_key="nb_poteaux",
+        tcd_measure_label="Nb poteaux", tcd_table="TCD_Poteaux")
+
+
+def build_gc_workbook(rows, cable_detail, params):
+    """Construit le classeur de l'analyse GC souterrain (sans l'enregistrer)."""
+    return _assemble_workbook(
+        rows, cable_detail, params,
+        list_columns=GC_COLUMNS, list_sheet="GC souterrains",
+        list_table="ListeGC",
+        cable_columns=CABLE_GC_COLUMNS, cable_sheet="Câbles associés",
+        cable_table="CablesAssociesGC",
+        tcd_dims=GC_TCD_COLUMNS, tcd_measure_key="nb_gc",
+        tcd_measure_label="Nb GC", tcd_table="TCD_GC")
+
+
 def export_xlsx(path, rows, cable_detail, params):
-    """Génère le fichier XLSX à ``path`` et renvoie ce chemin."""
-    wb = build_workbook(rows, cable_detail, params)
-    wb.save(path)
+    """Génère le fichier XLSX (analyse poteaux) à ``path``."""
+    build_workbook(rows, cable_detail, params).save(path)
+    return path
+
+
+def export_gc_xlsx(path, rows, cable_detail, params):
+    """Génère le fichier XLSX (analyse GC souterrain) à ``path``."""
+    build_gc_workbook(rows, cable_detail, params).save(path)
     return path
 
 
@@ -209,9 +248,36 @@ def build_params(context):
         ("cables_total", "Câbles analysés"),
         ("poteaux_sans_cable_tire", "Poteaux sans câble tiré"),
     ]
-    params = []
+    return _ordered_params(context, ordered_labels)
+
+
+def build_gc_params(context):
+    """Met en forme le contexte d'export GC en liste (label, valeur) ordonnée."""
+    ordered_labels = [
+        ("date_export", "Date d'export"),
+        ("couche_gc", "Couche GC"),
+        ("couche_cables", "Couche câbles"),
+        ("champ_id_gc", "Champ ID GC"),
+        ("champ_nom_gc", "Champ nom / code GC"),
+        ("champ_suivi", "Champ suivi travaux GC"),
+        ("etats_gc_retenus", "États GC retenus (travaux faits)"),
+        ("territoires_retenus", "Territoires / plaques retenus"),
+        ("statuts_tires", "Statuts câble « tirés »"),
+        ("buffer_m", "Rayon buffer (m)"),
+        ("crs_analyse", "CRS d'analyse"),
+        ("gc_total", "GC analysés"),
+        ("gc_selectionnes", "GC travaux faits"),
+        ("cables_total", "Câbles analysés"),
+        ("gc_sans_cable_tire", "GC sans câble tiré"),
+    ]
+    return _ordered_params(dict(context or {}), ordered_labels)
+
+
+def _ordered_params(context, ordered_labels):
+    """Ordonne les clés connues, puis ajoute les autres ; injecte la date."""
     if "date_export" not in context:
         context["date_export"] = datetime.now().strftime("%Y-%m-%d %H:%M")
+    params = []
     used = set()
     for key, label in ordered_labels:
         if key in context:
