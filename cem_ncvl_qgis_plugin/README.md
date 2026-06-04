@@ -9,6 +9,10 @@ Il répond au besoin client « poteaux implantés / remplacés sans câblage tir
 sur l'ensemble du territoire CEM NCVL chargé dans QGIS (aucun filtre CVL ni
 limite de date n'est imposé).
 
+Depuis la **1.1.0**, le plugin gère aussi un second cas client via l'onglet
+**Analyse GC souterrain** : les **artères GC dont les travaux sont faits** mais
+sans câble tiré (voir section dédiée plus bas).
+
 ---
 
 ## 1. Installation
@@ -155,6 +159,34 @@ structurées et colonnes ajustées, pour une exploitation directe.
 
 ---
 
+## 5 bis. Analyse GC souterrain (onglet dédié)
+
+Second cas client : identifier les **artères de génie civil souterrain dont les
+travaux sont faits** mais pour lesquelles **aucun câble rattaché n'est tiré**.
+
+| Rôle    | Couche CEM NCVL      | Géométrie         | CRS    |
+| ------- | -------------------- | ----------------- | ------ |
+| GC      | `0_artere_gc`        | (Multi)LineString | 2154   |
+| Câbles  | `0_cable_suivi.geom` | (Multi)LineString | 2154   |
+
+**Mapping GC** (présélections intelligentes) : ID GC `id_0`, nom / code GC
+`nom` (sinon l'ID), suivi travaux `suivi_pilotage`, plaque `plaque`, commune
+`commune`, longueur `ml_calc`/`ml`.
+
+**Règle métier** :
+1. ne retenir que les GC « travaux faits » (par défaut `suivi_pilotage` ∈
+   {`TRX fini`, `facturation`}, modifiable) ;
+2. rattacher les câbles par **intersection ligne↔ligne** en EPSG:2154, avec une
+   **tolérance paramétrable** (par défaut **1 m** ; `0` = intersection stricte) ;
+3. sortir le GC si **aucun** câble rattaché n'est tiré
+   (`Aucun câble associé au GC` ou `Aucun câble au statut tiré sur GC`).
+
+**Restitutions** : tableau dédié (avec zoom carte et tri/filtre), **export
+shapefile** linéaire des GC sortis, et **export XLSX** propre (feuilles
+`Paramètres`, `GC souterrains`, `Câbles associés`, `Synthèse`, `TCD`).
+
+---
+
 ## 6. Architecture
 
 ```
@@ -164,17 +196,19 @@ cem_ncvl_qgis_plugin/
 ├─ cem_ncvl_plugin.py      # intégration QGIS (menu, action)
 ├─ qgis_adapter.py         # seul module métier qui importe QGIS
 ├─ ui/
-│  └─ main_dialog.py       # interface à onglets (qgis.PyQt)
+│  ├─ main_dialog.py       # fenêtre à onglets (qgis.PyQt)
+│  └─ gc_tab.py            # onglet « Analyse GC souterrain »
 ├─ core/                   # logique métier pure (testable sans QGIS)
 │  ├─ normalize.py
-│  ├─ geometry.py          # distances point/ligne + grille spatiale
-│  ├─ models.py            # Pole / Cable
+│  ├─ geometry.py          # distances point/ligne, ligne/ligne + grille
+│  ├─ models.py            # Pole / Cable / GcArtere
 │  ├─ layer_mapping.py     # présélection intelligente couches/champs
 │  ├─ cable_filters.py     # statuts « tirés »
-│  ├─ poteaux_analysis.py  # règle métier principale
+│  ├─ poteaux_analysis.py  # règle métier poteaux
+│  ├─ gc_analysis.py       # règle métier GC souterrain
 │  ├─ synthese.py          # synthèses + table TCD
-│  ├─ columns.py           # définition des colonnes
-│  └─ export_xlsx.py       # génération du classeur Excel
+│  ├─ columns.py           # définition des colonnes (poteaux + GC)
+│  └─ export_xlsx.py       # génération des classeurs Excel
 ├─ resources/icon.svg
 ├─ tests/                  # tests pytest de la logique métier
 └─ README.md

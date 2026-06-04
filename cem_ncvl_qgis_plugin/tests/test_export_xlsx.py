@@ -1,7 +1,7 @@
 from openpyxl import load_workbook
 
 from cem_ncvl_qgis_plugin.core.export_xlsx import (
-    build_params, export_xlsx,
+    build_params, build_gc_params, export_xlsx, export_gc_xlsx,
 )
 
 
@@ -47,6 +47,35 @@ def test_export_with_empty_rows(tmp_path):
     # même vide, toutes les feuilles attendues existent
     assert "Liste poteaux" in wb.sheetnames
     assert "TCD" in wb.sheetnames
+
+
+def test_gc_export_creates_all_sheets(tmp_path):
+    rows = [{
+        "id_gc": "GC-A", "nom_gc": "GC-A", "commune": "Bordeaux",
+        "departement": "33", "territoire": "P1", "suivi_pilotage": "TRX fini",
+        "longueur": "120", "nb_cables": 1, "etats_cables": "en_cours",
+        "cables_associes": "c1", "cables_non_tires": "en_cours",
+        "motif": "Aucun câble au statut tiré sur GC", "rayon_buffer_m": 1.0,
+        "nb_cables_intersectes": 1, "mode_rattachement": "Spatial",
+    }]
+    cable_detail = [{
+        "id_gc": "GC-A", "ref_cable": "c1", "statut_cable": "en_cours",
+        "distance_m": 0.0, "commune": "Bordeaux", "departement": "33",
+        "territoire": "P1",
+    }]
+    params = build_gc_params({
+        "couche_gc": "0_artere_gc", "buffer_m": 1.0,
+        "statuts_tires": ["Tiré", "Tirage fini"],
+    })
+    path = tmp_path / "gc.xlsx"
+    export_gc_xlsx(str(path), rows, cable_detail, params)
+
+    wb = load_workbook(str(path))
+    assert set(wb.sheetnames) == {
+        "Paramètres", "GC souterrains", "Câbles associés", "Synthèse", "TCD"}
+    ws = wb["GC souterrains"]
+    assert ws["A1"].value == "ID GC"
+    assert ws["A2"].value == "GC-A"
 
 
 def test_build_params_orders_known_keys_first():

@@ -44,26 +44,35 @@ TCD_COLUMNS = [
     ("motif", "Motif de sortie"),
 ]
 
+# Variante GC : dimension métier = suivi des travaux GC.
+GC_TCD_COLUMNS = [
+    ("territoire", "Territoire / plaque"),
+    ("departement", "Département"),
+    ("commune", "Commune"),
+    ("suivi_pilotage", "Suivi travaux GC"),
+    ("motif", "Motif de sortie"),
+]
 
-def build_tcd_table(rows):
+
+def build_tcd_table(rows, dim_columns=TCD_COLUMNS, measure_name="nb_poteaux"):
     """Table à plat agrégée, prête à être pivotée dans Excel.
 
-    Une ligne par combinaison (territoire, département, commune, état, motif)
-    avec le nombre de poteaux. C'est le livrable robuste de remplacement d'un
-    vrai TCD natif.
+    Une ligne par combinaison des dimensions ``dim_columns`` avec le nombre
+    d'entités (``measure_name``). C'est le livrable robuste de remplacement
+    d'un vrai TCD natif.
     """
     counter = Counter()
     for row in rows:
         key = tuple(
             (row.get(col) or EMPTY_LABEL) if row.get(col) not in (None, "")
             else EMPTY_LABEL
-            for col, _ in TCD_COLUMNS
+            for col, _ in dim_columns
         )
         counter[key] += 1
 
     table = []
     for key, nb in sorted(counter.items(), key=lambda kv: (-kv[1], kv[0])):
-        entry = {col: value for (col, _), value in zip(TCD_COLUMNS, key)}
-        entry["nb_poteaux"] = nb
+        entry = {col: value for (col, _), value in zip(dim_columns, key)}
+        entry[measure_name] = nb
         table.append(entry)
     return table

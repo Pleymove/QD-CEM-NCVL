@@ -28,3 +28,15 @@ class Cable:
     status: str
     lines: list = field(default_factory=list)  # [[(x, y), ...], ...]
     attrs: dict = field(default_factory=dict)
+
+
+@dataclass
+class GcArtere:
+    """Artère de génie civil souterrain (géométrie (Multi)LineString)."""
+
+    id: str
+    label: str          # libellé / code GC (nom si rempli, sinon id)
+    state: str          # suivi_pilotage
+    lines: list = field(default_factory=list)  # [[(x, y), ...], ...]
+    attrs: dict = field(default_factory=dict)
+    fid: object = None  # identifiant d'entité QGIS (pour zoom / export)
